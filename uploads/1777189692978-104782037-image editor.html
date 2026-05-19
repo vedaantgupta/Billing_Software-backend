@@ -1,0 +1,570 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PixelVault Pro</title>
+<style>
+/* Global Reset & Base */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  background-color: #1b1b1b;
+  color: #f0f0f0;
+  min-width: 320px;
+  line-height: 1.6;
+}
+
+/* Header */
+header {
+  background-color: #222;
+  color: #ffffff;
+  text-align: center;
+  padding: 1.2rem;
+  font-size: 1.8rem;
+  font-weight: 600;
+  border-bottom: 1px solid #444;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+}
+
+/* Main Container */
+main {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: auto;
+}
+
+/* Canvas */
+canvas {
+  display: block;
+  margin: 1.5rem auto;
+  max-width: 100%;
+  height: auto;
+  background-color: #000;
+  border: 2px solid #444;
+  border-radius: 10px;
+  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+}
+
+/* Controls Layout */
+.controls,
+.rotate,
+.cropOverlay,
+.filters,
+.grid-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.2rem;
+  background-color: #2a2a2a;
+  padding: 1rem;
+  margin-top: 1.5rem;
+  border-radius: 12px;
+  box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+}
+
+/* Label Styling */
+label {
+  display: flex;
+  flex-direction: column;
+  color: #ccc;
+  font-size: 0.9rem;
+  min-width: 160px;
+}
+
+/* Input Elements */
+input[type="range"],
+input[type="color"],
+input[type="number"] {
+  width: 160px;
+  padding: 6px;
+  border: 1px solid #666;
+  border-radius: 6px;
+  background-color: #3a3a3a;
+  color: #fff;
+}
+
+input[type="range"] {
+  accent-color: #007bff;
+  height: 6px;
+}
+
+input[type="color"] {
+  cursor: pointer;
+}
+
+input[type="file"] {
+  margin-bottom: 15px;
+}
+
+/* Buttons */
+button {
+  padding: 0.6rem 1.2rem;
+  font-size: 0.95rem;
+  border: none;
+  border-radius: 6px;
+  background-color: #007bff;
+  color: white;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+button:hover {
+  background-color: #0056b3;
+}
+
+/* Crop Rectangle Styling */
+.crop-rect,
+#cropOverlay {
+  position: absolute;
+  border: 2px dashed white;
+  pointer-events: none;
+  display: none;
+  z-index: 10;
+  background-color: rgba(255,255,255,0.05);
+  backdrop-filter: contrast(0.8);
+  border-radius: 8px;
+}
+
+/* Filter Strip */
+#filter-strip {
+  display: flex;
+  overflow-x: auto;
+  gap: 12px;
+  padding: 12px;
+  background-color: #f5f5f5;
+  border-radius: 12px;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.filter-thumb {
+  flex: 0 0 auto;
+  text-align: center;
+  cursor: pointer;
+  width: 100px;
+  color: #333;
+}
+
+.filter-thumb img {
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  border: 2px solid transparent;
+  transition: border 0.2s ease, transform 0.2s ease;
+}
+
+.filter-thumb:hover img {
+  border: 2px solid #007bff;
+  transform: scale(1.05);
+}
+
+.filter-name {
+  font-size: 12px;
+  margin-top: 6px;
+  color: #555;
+}
+
+/* Grid Controls */
+.grid-controls input[type="number"] {
+  width: 80px;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+  .controls,
+  .rotate,
+  .filters,
+  .grid-controls {
+    flex-direction: column;
+  }
+
+  label {
+    min-width: 100%;
+  }
+
+  input[type="range"],
+  input[type="color"],
+  input[type="number"] {
+    width: 100%;
+  }
+
+  #filter-strip {
+    justify-content: center;
+  }
+}
+
+#cropOverlay {
+  position: absolute;
+  border: 2px dashed #ffffff;
+  background-color: rgba(255, 255, 255, 0.05); /* faint highlight */
+  display: none;
+  pointer-events: none;
+  z-index: 1000; /* ensure it's above canvas */
+  border-radius: 8px;
+  backdrop-filter: contrast(0.8);
+  transition: width 0.05s linear, height 0.05s linear;
+}
+
+</style>
+
+</head>
+<body>
+  <header>🎨 PixelVault Pro – Complete Image Editor</header>
+  <main>
+    <input type="file" id="upload" accept="image/*">
+    <canvas id="canvas" width="800" height="600"></canvas>
+
+ <div class="rotate">
+    <label id="rotateLabel">
+      Rotate (<span id="angleValue">0°</span>)
+      <input
+        type="range"
+        id="rotateAngle"
+        min="-180"
+        max="180"
+        value="0"
+        step="1"
+        oninput="rotateByDegrees(this.value)"
+      >
+    </label>
+  </div>
+
+
+    <div class="controls">
+      <button onclick="rotate()">Rotate</button>
+      <button onclick="mirror()">Mirror</button>
+      <button onclick="toggleGrid()">Toggle Grid</button>
+      <button onclick="addText()">Add Text</button>
+      <button onclick="reset()">Reset</button>
+      <button onclick="download()">Download</button>
+    </div>
+
+    <div class="cropOverlay">
+        <button onclick="startCrop()">Start Crop</button>
+      <button onclick="confirmCrop()">Confirm Crop</button>
+          <button onclick="autoEnhance()">Auto Enhance</button>
+      </div>
+
+    <div class="filters">
+      <label>Brightness <input type="range" id="brightness" min="-100" max="100" value="0"></label>
+      <label>Contrast <input type="range" id="contrast" min="-100" max="100" value="0"></label>
+      <label>Saturation <input type="range" id="saturation" min="-100" max="100" value="0"></label>
+      <label>Exposure <input type="range" id="exposure" min="-100" max="100" value="0"></label>
+      <label>Highlights <input type="range" id="highlights" min="-100" max="100" value="0"></label>
+      <label>Shadows <input type="range" id="shadows" min="-100" max="100" value="0"></label>
+      <label>Tint <input type="color" id="tint" value="#ffffff"></label>
+      <label>Temperature <input type="range" id="temperature" min="-100" max="100" value="0"></label>
+      <button onclick="filter('grayscale')">Grayscale</button>
+      <button onclick="filter('sepia')">Sepia</button>
+      <button onclick="filter('invert')">Invert</button>
+      <button onclick="filter('blur')">Blur</button>
+    </div>
+
+     <h2>Advanced Photo Filter Gallery</h2>
+
+  <div id="filter-strip">
+<!-- Filter previews dynamically inserted -->
+  </div>
+
+    <div class="grid-controls">
+      <label>Grid Color <input type="color" id="gridColor" value="#ffffff"></label>
+      <label>Grid Rows <input type="number" id="gridRows" min="2" max="100" value="10"></label>
+      <label>Grid Cols <input type="number" id="gridCols" min="2" max="100" value="10"></label>
+      <label>Line Width <input type="range" id="lineWidth" min="1" max="10" value="1"></label>
+      <label><input type="checkbox" id="showGrid"> Show Grid</label>
+      <label><input type="checkbox" id="diagonals"> Diagonals</label>
+      <label><input type="checkbox" id="numbers"> Numbers</label>
+    </div>
+  </main>
+
+  <script>
+// Final Full JavaScript for PixelVault Pro – Functional, Professional
+
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const overlay = document.getElementById('cropOverlay');
+const uploadInput = document.getElementById('upload');
+const filterStrip = document.getElementById('filter-strip');
+
+let originalData = null;
+let image = new Image();
+let cropping = false;
+let cropStart = {}, cropEnd = {};
+
+// Upload image
+uploadInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (evt) => {
+    image.onload = () => {
+      canvas.width = image.width;
+      canvas.height = image.height;
+      ctx.drawImage(image, 0, 0);
+      originalData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      generateThumbnails(evt.target.result);
+    };
+    image.src = evt.target.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+function reset() {
+  if (originalData) ctx.putImageData(originalData, 0, 0);
+  canvas.style.filter = 'none';
+}
+
+function download() {
+  const a = document.createElement('a');
+  a.href = canvas.toDataURL();
+  a.download = 'edited.png';
+  a.click();
+}
+
+function rotate() {
+  rotateCanvas(90);
+}
+
+function mirror() {
+  ctx.save();
+  ctx.scale(-1, 1);
+  ctx.drawImage(canvas, -canvas.width, 0);
+  ctx.restore();
+  originalData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function rotateByDegrees(angle) {
+  const parsedAngle = parseFloat(angle);
+  rotateCanvas(parsedAngle);
+  const angleSpan = document.getElementById("angleValue");
+  if (angleSpan) {
+    angleSpan.textContent = `${parsedAngle}°`;
+  }
+}
+
+function rotateCanvas(degrees) {
+  const radians = degrees * Math.PI / 180;
+  const tempCanvas = document.createElement('canvas');
+  const tempCtx = tempCanvas.getContext('2d');
+  const width = canvas.width;
+  const height = canvas.height;
+  const sin = Math.abs(Math.sin(radians));
+  const cos = Math.abs(Math.cos(radians));
+  const newWidth = Math.ceil(width * cos + height * sin);
+  const newHeight = Math.ceil(width * sin + height * cos);
+  tempCanvas.width = newWidth;
+  tempCanvas.height = newHeight;
+  tempCtx.translate(newWidth / 2, newHeight / 2);
+  tempCtx.rotate(radians);
+  tempCtx.drawImage(canvas, -width / 2, -height / 2);
+  canvas.width = newWidth;
+  canvas.height = newHeight;
+  ctx.clearRect(0, 0, newWidth, newHeight);
+  ctx.drawImage(tempCanvas, 0, 0);
+  originalData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function autoEnhance() {
+  document.getElementById('brightness').value = 10;
+  document.getElementById('contrast').value = 15;
+  document.getElementById('saturation').value = 20;
+  document.getElementById('shadows').value = 10;
+  document.getElementById('highlights').value = -5;
+  applyFilters();
+}
+
+function applyFilters() {
+  if (!originalData) return;
+  const data = new Uint8ClampedArray(originalData.data);
+  const brightness = +document.getElementById('brightness').value;
+  const contrast = +document.getElementById('contrast').value;
+  const exposure = +document.getElementById('exposure').value;
+  const saturation = +document.getElementById('saturation').value;
+  const highlights = +document.getElementById('highlights').value;
+  const shadows = +document.getElementById('shadows').value;
+  const tempShift = +document.getElementById('temperature').value;
+
+  for (let i = 0; i < data.length; i += 4) {
+    let avg = (data[i] + data[i + 1] + data[i + 2]) / 3;
+    data[i] += brightness + exposure + tempShift;
+    data[i + 1] += brightness + exposure;
+    data[i + 2] += brightness + exposure - tempShift;
+    data[i] = (data[i] - 128) * (contrast / 100 + 1) + 128;
+    data[i + 1] = (data[i + 1] - 128) * (contrast / 100 + 1) + 128;
+    data[i + 2] = (data[i + 2] - 128) * (contrast / 100 + 1) + 128;
+    data[i] += (avg - data[i]) * (shadows / 100);
+    data[i + 1] += (avg - data[i + 1]) * (shadows / 100);
+    data[i + 2] += (avg - data[i + 2]) * (shadows / 100);
+    data[i] = Math.min(255, Math.max(0, data[i]));
+    data[i + 1] = Math.min(255, Math.max(0, data[i + 1]));
+    data[i + 2] = Math.min(255, Math.max(0, data[i + 2]));
+  }
+  ctx.putImageData(new ImageData(data, canvas.width, canvas.height), 0, 0);
+}
+
+document.querySelectorAll('.filters input').forEach(input => input.addEventListener('input', applyFilters));
+
+function addText() {
+  const text = prompt("Text to add:");
+  const x = parseInt(prompt("X position:", 50));
+  const y = parseInt(prompt("Y position:", 50));
+  ctx.fillStyle = 'white';
+  ctx.font = '30px Arial';
+  ctx.fillText(text, x, y);
+  originalData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+function startCrop() {
+  cropping = true;
+  overlay.style.display = 'block';
+}
+
+function confirmCrop() {
+  const x = Math.min(cropStart.x, cropEnd.x);
+  const y = Math.min(cropStart.y, cropEnd.y);
+  const width = Math.abs(cropEnd.x - cropStart.x);
+  const height = Math.abs(cropEnd.y - cropStart.y);
+  if (width === 0 || height === 0) return;
+  const cropped = ctx.getImageData(x, y, width, height);
+  canvas.width = width;
+  canvas.height = height;
+  ctx.putImageData(cropped, 0, 0);
+  overlay.style.display = 'none';
+  cropping = false;
+  originalData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+canvas.addEventListener('mousedown', (e) => {
+  if (!cropping) return;
+  cropStart = { x: e.offsetX, y: e.offsetY };
+});
+
+canvas.addEventListener('mouseup', (e) => {
+  if (!cropping) return;
+  cropEnd = { x: e.offsetX, y: e.offsetY };
+});
+
+canvas.addEventListener('mousemove', (e) => {
+  if (!cropping || cropStart.x == null) return;
+  const x = Math.min(e.offsetX, cropStart.x);
+  const y = Math.min(e.offsetY, cropStart.y);
+  const width = Math.abs(e.offsetX - cropStart.x);
+  const height = Math.abs(e.offsetY - cropStart.y);
+  overlay.style.left = canvas.offsetLeft + x + 'px';
+  overlay.style.top = canvas.offsetTop + y + 'px';
+  overlay.style.width = width + 'px';
+  overlay.style.height = height + 'px';
+});
+
+function toggleGrid() {
+  if (!document.getElementById('showGrid').checked) return reset();
+  const rows = +document.getElementById('gridRows').value;
+  const cols = +document.getElementById('gridCols').value;
+  const color = document.getElementById('gridColor').value;
+  const width = +document.getElementById('lineWidth').value;
+  const diagonals = document.getElementById('diagonals').checked;
+  const numbers = document.getElementById('numbers').checked;
+  reset();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.font = '12px sans-serif';
+  ctx.fillStyle = color;
+  const rowHeight = canvas.height / rows;
+  const colWidth = canvas.width / cols;
+
+  for (let i = 0; i <= rows; i++) {
+    const y = i * rowHeight;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+    if (numbers && i < rows) ctx.fillText(i, 2, y + 12);
+  }
+  for (let i = 0; i <= cols; i++) {
+    const x = i * colWidth;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+    if (numbers && i < cols) ctx.fillText(i, x + 2, 12);
+  }
+
+  if (diagonals) {
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = c * colWidth;
+        const y = r * rowHeight;
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+        ctx.lineTo(x + colWidth, y + rowHeight);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(x + colWidth, y);
+        ctx.lineTo(x, y + rowHeight);
+        ctx.stroke();
+      }
+    }
+  }
+}
+
+const filters = [
+  { name: 'Original', css: 'none' },
+  { name: 'Warm', css: 'sepia(10%) brightness(1.1) saturate(1.2) hue-rotate(10deg)' },
+  { name: 'Cool', css: 'contrast(1.1) brightness(0.9) hue-rotate(200deg)' },
+  { name: 'Natural', css: 'contrast(1.05) brightness(1.05) saturate(1.1)' },
+  { name: 'Color Boost', css: 'saturate(1.8) contrast(1.2)' },
+  { name: 'Grayscale', css: 'grayscale(100%)' },
+  { name: 'Sepia', css: 'sepia(100%)' },
+  { name: 'Vintage', css: 'sepia(0.4) contrast(0.9) brightness(1.1)' },
+  { name: 'Retro', css: 'sepia(0.6) saturate(0.6) hue-rotate(-15deg)' },
+  { name: 'Blur', css: 'blur(2px)' },
+  { name: 'Glow', css: 'brightness(1.3) contrast(0.9)' }
+];
+
+function generateThumbnails(src) {
+  filterStrip.innerHTML = '';
+  filters.forEach(filter => {
+    const thumbDiv = document.createElement('div');
+    thumbDiv.className = 'filter-thumb';
+    const thumbImg = document.createElement('img');
+    thumbImg.src = src;
+    thumbImg.style.filter = filter.css;
+    const name = document.createElement('div');
+    name.className = 'filter-name';
+    name.textContent = filter.name;
+    thumbDiv.appendChild(thumbImg);
+    thumbDiv.appendChild(name);
+    thumbDiv.onclick = () => canvas.style.filter = filter.css;
+    filterStrip.appendChild(thumbDiv);
+  });
+}
+
+function filter(type) {
+  const img = document.getElementById('canvas');
+  switch (type) {
+    case 'grayscale':
+      img.style.filter = 'grayscale(100%)';
+      break;
+    case 'sepia':
+      img.style.filter = 'sepia(100%)';
+      break;
+    case 'invert':
+      img.style.filter = 'invert(100%)';
+      break;
+    case 'blur':
+      img.style.filter = 'blur(5px)';
+      break;
+    default:
+      img.style.filter = 'none';
+  }
+}
+
+</script>
+
+</body>
+</html>

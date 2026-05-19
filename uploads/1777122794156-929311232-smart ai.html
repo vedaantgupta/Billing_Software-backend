@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Smart AI Chat - No API Key Needed</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f4f4;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+    header {
+      background: #0d6efd;
+      color: white;
+      text-align: center;
+      padding: 1rem;
+      font-size: 1.5rem;
+      font-weight: bold;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+    }
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1rem;
+      max-width: 800px;
+      margin: auto;
+      width: 100%;
+    }
+    .msg {
+      padding: 1rem;
+      border-radius: 12px;
+      margin: 0.5rem 0;
+      max-width: 85%;
+      line-height: 1.5;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      word-wrap: break-word;
+    }
+    .user {
+      background: #d0ebff;
+      margin-left: auto;
+      text-align: right;
+      border-top-right-radius: 0;
+    }
+    .bot {
+      background: white;
+      margin-right: auto;
+      text-align: left;
+      border-top-left-radius: 0;
+    }
+    .controls {
+      display: flex;
+      padding: 0.75rem;
+      gap: 0.5rem;
+      border-top: 1px solid #ccc;
+      background: white;
+      max-width: 800px;
+      margin: auto;
+      width: 100%;
+    }
+    textarea {
+      flex: 1;
+      font-size: 1rem;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #ccc;
+      resize: none;
+      min-height: 44px;
+    }
+    button {
+      padding: 10px 15px;
+      font-size: 1rem;
+      border: none;
+      border-radius: 10px;
+      background: #0d6efd;
+      color: white;
+      cursor: pointer;
+    }
+
+    @media (max-width: 600px) {
+      header {
+        font-size: 1.2rem;
+      }
+      .msg {
+        font-size: 0.95rem;
+      }
+      button {
+        font-size: 0.9rem;
+        padding: 8px 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>🤖 Smart AI Chat (Safe & Free)</header>
+  <main id="chat"></main>
+  <div class="controls">
+    <textarea id="input" placeholder="Ask me anything..."></textarea>
+    <button onclick="ask()">Send</button>
+  </div>
+
+  <script>
+    const chat = document.getElementById("chat");
+    const input = document.getElementById("input");
+
+    function addMessage(text, sender = "bot") {
+      const msg = document.createElement("div");
+      msg.className = "msg " + (sender === "user" ? "user" : "bot");
+      msg.textContent = text;
+      chat.appendChild(msg);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function ask() {
+      const question = input.value.trim();
+      if (!question) return;
+      addMessage(question, "user");
+      input.value = "";
+      addMessage("Thinking...");
+
+      let reply = await getDuckDuckGoAnswer(question);
+      if (!reply) {
+        reply = getSmartFallback(question);
+      }
+
+      document.querySelectorAll(".msg").forEach(msg => {
+        if (msg.textContent === "Thinking...") msg.remove();
+      });
+
+      addMessage(reply);
+    }
+
+    async function getDuckDuckGoAnswer(query) {
+      try {
+        const res = await fetch(`https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_redirect=1&no_html=1`);
+        const data = await res.json();
+        if (data.AbstractText) return data.AbstractText;
+        if (data.Answer) return data.Answer;
+        if (data.RelatedTopics && data.RelatedTopics[0]?.Text) return data.RelatedTopics[0].Text;
+        return null;
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function getSmartFallback(q) {
+      const lower = q.toLowerCase();
+
+      if (lower.includes("hello") || lower.includes("hi")) return "Hello there! 😊 How can I assist you today?";
+      if (lower.includes("your name")) return "I'm your smart assistant – no login, no key, just answers!";
+      if (lower.includes("who are you")) return "I'm a friendly AI chatbot built with love and safety in mind.";
+      if (lower.includes("weather")) return "Try asking like: 'What's the weather in London?' for better results.";
+      if (lower.includes("joke")) return "Why don’t scientists trust atoms? Because they make up everything! 😂";
+      if (lower.includes("bye")) return "Goodbye! Come back anytime you need help.";
+      if (lower.includes("thank")) return "You're welcome! 😊";
+
+      return "Hmm... I couldn’t find a perfect answer. Try rephrasing or asking something else!";
+    }
+  </script>
+</body>
+</html>

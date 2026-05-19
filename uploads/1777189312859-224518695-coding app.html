@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ProCode IDE</title>
+
+  <!-- CodeMirror Styles & Fonts -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/material-darker.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/matchesonscrollbar.min.css">
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code&display=swap" rel="stylesheet">
+
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      height: 100%;
+      margin: 0;
+      font-family: 'Fira Code', monospace;
+      background: #1e1e1e;
+      color: #d4d4d4;
+      overflow: hidden;
+    }
+    header {
+      background: #252526;
+      padding: 8px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-bottom: 1px solid #444;
+    }
+    .toolbar button, .toolbar select {
+      background: #3a3d41;
+      color: white;
+      border: none;
+      margin-right: 6px;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    .toolbar button:hover {
+      background: #444;
+    }
+    #container {
+      display: flex;
+      height: calc(100% - 50px);
+    }
+    #sidebar {
+      width: 260px;
+      background: #2d2d2d;
+      padding: 10px;
+      border-right: 1px solid #444;
+      overflow-y: auto;
+    }
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    #tabs {
+      display: flex;
+      background: #1e1e1e;
+      border-bottom: 1px solid #444;
+      padding: 4px;
+    }
+    #tabs button {
+      background: #3a3d41;
+      color: #ccc;
+      border: none;
+      padding: 6px 12px;
+      border-radius: 4px;
+      margin-right: 4px;
+      cursor: pointer;
+    }
+    #tabs button.active {
+      background: #007acc;
+      color: white;
+    }
+    #editorArea {
+      flex: 1;
+      position: relative;
+    }
+    .CodeMirror {
+      height: 100%;
+      font-size: 14px;
+    }
+    #terminal {
+      height: 180px;
+      background: #1e1e1e;
+      border-top: 1px solid #444;
+      padding: 10px;
+      font-family: monospace;
+      overflow-y: auto;
+      color: #0f0;
+    }
+  </style>
+</head>
+
+<body>
+  <header>
+    <div><strong><i class="fas fa-terminal"></i> ProCode IDE</strong></div>
+    <div class="toolbar">
+      <button onclick="runCode()">▶ Run</button>
+      <button onclick="saveFile()">💾 Save</button>
+      <button onclick="openFile()">📂 Open</button>
+      <button onclick="newTab()">➕ Tab</button>
+<button onclick="combineFiles()">🔗 Combine</button>
+      <select id="language" onchange="setLang(this.value)">
+        <option value="htmlmixed">HTML</option>
+        <option value="javascript">JavaScript</option>
+        <option value="css">CSS</option>
+        <option value="python">Python</option>
+        <option value="clike">C/C++/Java</option>
+        <option value="sql">SQL</option>
+        <option value="markdown">Markdown</option>
+        <option value="json">JSON</option>
+      </select>
+      <button onclick="toggleTheme()">🎨 Theme</button>
+    </div>
+  </header>
+
+  <div id="container">
+    <div id="sidebar">
+      <h4>Explorer</h4>
+      <ul id="fileList"></ul>
+    </div>
+    <div id="main">
+      <div id="tabs"></div>
+      <div id="editorArea"></div>
+      <div id="terminal">> Welcome to ProCode IDE</div>
+    </div>
+  </div>
+
+    
+</body>
+</html>
+
+  <!-- CodeMirror Scripts -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/clike/clike.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/markdown/markdown.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/json/json.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/closetag.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/edit/matchbrackets.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/search.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/search/searchcursor.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/dialog/dialog.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/hint/show-hint.min.js"></script>
+<script>
+  let tabs = {}, activeTab = null, currentLang = 'htmlmixed', isDark = true;
+
+  function getLangMode(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    return {
+      html: 'htmlmixed',
+      js: 'javascript',
+      css: 'css',
+      py: 'python',
+      java: 'text/x-java',
+      cpp: 'text/x-c++src',
+      c: 'text/x-csrc',
+      sql: 'sql',
+      md: 'markdown',
+      json: 'application/json'
+    }[ext] || 'htmlmixed';
+  }
+
+  function newTab(name = null, content = '') {
+  if (!name) {
+    name = prompt("Enter filename (e.g., index.html):", "untitled.html");
+    if (!name) return; // Cancelled
+  }
+    const id = 'tab-' + Date.now();
+    const tabBtn = document.createElement('button');
+    tabBtn.textContent = name;
+    tabBtn.onclick = () => switchTab(id);
+    tabBtn.id = id + '-btn';
+    document.getElementById('tabs').appendChild(tabBtn);
+
+    const ta = document.createElement('textarea');
+    ta.id = id;
+    document.getElementById('editorArea').innerHTML = '';
+    document.getElementById('editorArea').appendChild(ta);
+
+    const cm = CodeMirror.fromTextArea(ta, {
+      lineNumbers: true,
+      mode: getLangMode(name),
+      theme: isDark ? 'material-darker' : 'default',
+      autoCloseBrackets: true,
+      matchBrackets: true,
+      extraKeys: {
+        "Ctrl-Space": "autocomplete",
+        "Ctrl-F": "findPersistent",
+        "Ctrl-Q": cm => cm.foldCode(cm.getCursor())
+      },
+      lineWrapping: true
+    });
+
+    tabs[id] = { cm, name };
+    switchTab(id);
+  }
+
+  function switchTab(id) {
+    activeTab = id;
+    document.querySelectorAll('#tabs button').forEach(btn => btn.classList.remove('active'));
+    document.getElementById(id + '-btn').classList.add('active');
+    document.getElementById('editorArea').innerHTML = '';
+    const ta = document.createElement('textarea');
+    ta.id = id;
+    document.getElementById('editorArea').appendChild(ta);
+    const cm = CodeMirror.fromTextArea(ta, {
+      lineNumbers: true,
+      mode: getLangMode(tabs[id].name),
+      theme: isDark ? 'material-darker' : 'default',
+      autoCloseBrackets: true,
+      matchBrackets: true,
+      extraKeys: {
+        "Ctrl-Space": "autocomplete",
+        "Ctrl-F": "findPersistent",
+        "Ctrl-Q": cm => cm.foldCode(cm.getCursor())
+      },
+      lineWrapping: true
+    });
+    cm.setValue(tabs[id].cm.getValue());
+    tabs[id].cm = cm;
+  }
+
+  function runCode() {
+    const output = document.getElementById('terminal');
+    output.innerText += `\n> Running...`;
+
+    const files = Object.values(tabs);
+    const html = files.find(f => f.name.endsWith('.html'));
+    const css = files.find(f => f.name.endsWith('.css'));
+    const js = files.find(f => f.name.endsWith('.js'));
+    const py = files.find(f => f.name.endsWith('.py'));
+
+    if (py) {
+      output.innerText += `\n> Cannot run Python in browser (no API backend).`;
+    }
+
+    if (html) {
+      let baseHTML = html.cm.getValue();
+      const finalHTML = baseHTML
+        .replace('</head>', css ? `<style>${css.cm.getValue()}</style></head>` : '</head>')
+        .replace('</body>', js ? `<script>${js.cm.getValue()}<\/script></body>` : '</body>');
+
+      const win = window.open();
+      win.document.open();
+      win.document.write(finalHTML);
+      win.document.close();
+    } else {
+      output.innerText += `\n> Please open or create an .html file to run.`;
+    }
+
+    output.scrollTop = output.scrollHeight;
+  }
+
+  function saveFile() {
+    const tab = tabs[activeTab];
+    const blob = new Blob([tab.cm.getValue()], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = tab.name;
+    a.click();
+  }
+
+  function openFile() {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.onchange = e => {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = () => newTab(file.name, reader.result);
+      reader.readAsText(file);
+    };
+    input.click();
+  }
+
+  function setLang(lang) {
+    currentLang = lang;
+    Object.values(tabs).forEach(t => t.cm.setOption('mode', lang));
+  }
+
+  function toggleTheme() {
+    isDark = !isDark;
+    Object.values(tabs).forEach(t => t.cm.setOption('theme', isDark ? 'material-darker' : 'default'));
+  }
+
+  // Code snippet generator (no API)
+  function openSnippetGenerator() {
+    const html = prompt("Choose template: html, css, js");
+    const templates = {
+      html: "<!DOCTYPE html>\n<html>\n<head><title>Title</title></head>\n<body>\n<h1>Hello World</h1>\n</body>\n</html>",
+      css: "body { background: #f0f0f0; font-family: sans-serif; }",
+      js: "console.log('Hello from JavaScript!');"
+    };
+    if (templates[html]) {
+      newTab(`snippet.${html}`, templates[html]);
+    } else {
+      alert("Template not available");
+    }
+  }
+
+  // Enable scrolling
+  document.documentElement.style.overflow = 'auto';
+  document.body.style.overflow = 'auto';
+
+  const editorArea = document.getElementById('editorArea');
+  if (editorArea) editorArea.style.overflow = 'auto';
+
+  const terminal = document.getElementById('terminal');
+  if (terminal) terminal.style.overflowY = 'auto';
+
+  // Startup
+  newTab('index.html', '<!DOCTYPE html>\n<html><head></head><body><h1>Hello</h1></body></html>');
+  
+  function switchTab(id) {
+  if (activeTab && tabs[activeTab]) {
+    // Save code before switching
+    tabs[activeTab].content = tabs[activeTab].cm.getValue();
+  }
+
+  activeTab = id;
+  document.querySelectorAll('#tabs button').forEach(btn => btn.classList.remove('active'));
+  document.getElementById(id + '-btn').classList.add('active');
+  document.getElementById('editorArea').innerHTML = '';
+  const ta = document.createElement('textarea');
+  ta.id = id;
+  document.getElementById('editorArea').appendChild(ta);
+  const cm = CodeMirror.fromTextArea(ta, {
+    lineNumbers: true,
+    mode: getLangMode(tabs[id].name),
+    theme: isDark ? 'material-darker' : 'default',
+    autoCloseBrackets: true,
+    matchBrackets: true,
+    extraKeys: {
+      "Ctrl-Space": "autocomplete",
+      "Ctrl-F": "findPersistent",
+      "Ctrl-Q": cm => cm.foldCode(cm.getCursor())
+    },
+    lineWrapping: true
+  });
+
+  cm.setValue(tabs[id].content || tabs[id].cm.getValue()); // use stored or live value
+  tabs[id].cm = cm;
+}
+
+function combineFiles() {
+  const files = Object.entries(tabs); // [id, { cm, name }]
+
+  let combinedText = '';
+
+  files.forEach(([id, file]) => {
+    const value = file.cm.getValue(); // this works if cm is active
+
+    // Backup: if tab is not visible, cm instance is not active
+    // So we must re-create a temporary CodeMirror instance to get the latest value
+    if (!value) {
+      const ta = document.createElement('textarea');
+      ta.value = '';
+      const tempCM = CodeMirror.fromTextArea(ta, {
+        mode: getLangMode(file.name)
+      });
+      tempCM.setValue(file.cm.getValue());
+      tempCM.toTextArea();
+    }
+
+    combinedText += `\n\n/* ==== ${file.name} (${getLangMode(file.name)}) ==== */\n\n`;
+    combinedText += file.cm.getValue();
+  });
+
+  // Open combined code as new tab in the editor
+  newTab('combined.txt', combinedText);
+
+  // Optional: also open in a new read-only window
+  const win = window.open();
+  win.document.open();
+  win.document.write(`<pre style="white-space: pre-wrap; font-family: monospace; padding: 20px; background: #1e1e1e; color: #d4d4d4;">${combinedText.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</pre>`);
+  win.document.close();
+}
+
+</script>
+
+
+</body>
+</html>
