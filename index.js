@@ -931,6 +931,22 @@ app.get('/api/reviews/:userId', checkDB, async (req, res) => {
   }
 });
 
+app.delete('/api/reviews/cleanup', checkDB, async (req, res) => {
+  try {
+    const reviewsCollection = db.collection('reviews');
+    const result = await reviewsCollection.deleteMany({
+      $or: [
+        { reviewerName: 'Verified Client' },
+        { reviewerName: { $exists: false } }
+      ]
+    });
+    res.json({ message: `Successfully deleted ${result.deletedCount} reviews` });
+  } catch (err) {
+    res.status(500).json({ message: 'Error cleaning reviews' });
+  }
+});
+
+
 
 // --- Messaging Hub Endpoints ---
 
@@ -1061,12 +1077,14 @@ app.post('/api/network/messages/send', checkDB, async (req, res) => {
 });
 
 // Get all published products with personalization
+// Get all published products with personalization
 app.get('/api/marketplace/products', checkDB, async (req, res) => {
   try {
-    const { userId, search } = req.query;
+    const { userId, search, savedOnly, tag } = req.query;
     const workCollection = db.collection('work');
     const interactionsCollection = db.collection('user_interactions');
     const usersCollection = db.collection('users');
+    const savedSellersCollection = db.collection('saved_sellers');
 
     // 1. Fetch all published products
     let query = { type: 'products', 'data.isPublished': true };
@@ -1083,6 +1101,27 @@ app.get('/api/marketplace/products', checkDB, async (req, res) => {
     }
 
     let products = await workCollection.find(query).toArray();
+
+    // Fetch user's saved sellers map if userId exists
+    let savedSellersMap = {};
+    if (userId) {
+      const savedDocs = await savedSellersCollection.find({ userId }).toArray();
+      savedDocs.forEach(doc => {
+        savedSellersMap[doc.sellerId] = doc;
+      });
+
+      // Filter products by saved sellers if requested
+      if (savedOnly === 'true' || tag) {
+        products = products.filter(p => {
+          const rel = savedSellersMap[p.userId];
+          if (!rel) return false;
+          if (tag && tag !== 'All' && tag !== 'Saved') {
+            return rel.relationshipTag === tag;
+          }
+          return true;
+        });
+      }
+    }
 
     // 2. Personalization Logic (if userId provided)
     if (userId) {
@@ -1101,6 +1140,9 @@ app.get('/api/marketplace/products', checkDB, async (req, res) => {
       products = products.map(product => {
         let score = 0;
         const pData = product.data || {};
+
+        // Boost saved sellers
+        if (savedSellersMap[product.userId]) score += 25;
 
         // Boost based on user's business group similarity
         if (pData.productGroup === userGroup) score += 10;
@@ -1122,16 +1164,25 @@ app.get('/api/marketplace/products', checkDB, async (req, res) => {
       products.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     }
 
-    // Enrich with seller info
+    // Enrich with seller info and saved relation status
     const enrichedProducts = await Promise.all(products.map(async (p) => {
       const seller = await usersCollection.findOne(
         { _id: new ObjectId(p.userId) },
         { projection: { firstName: 1, lastName: 1, companyName: 1, professionalProfile: 1 } }
       );
+      
+      const savedRel = savedSellersMap[p.userId] || null;
+
       return { 
         ...p, 
         sellerName: seller?.companyName || (seller ? `${seller.firstName} ${seller.lastName}` : 'Unknown Business'),
-        sellerLogo: seller?.professionalProfile?.profilePicture
+        sellerLogo: seller?.professionalProfile?.profilePicture,
+        savedRelation: savedRel ? {
+          isSaved: true,
+          relationshipTag: savedRel.relationshipTag || 'Saved Seller',
+          customNotes: savedRel.customNotes || '',
+          isAutoConnected: Boolean(savedRel.isAutoConnected)
+        } : { isSaved: false }
       };
     }));
 
@@ -1161,6 +1212,331 @@ app.post('/api/marketplace/interact', checkDB, async (req, res) => {
     res.status(500).json({ message: 'Error tracking interaction' });
   }
 });
+
+// --- Cart Endpoints ---
+app.get('/api/marketplace/cart', checkDB, async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    
+    const cartCollection = db.collection('cart');
+    const items = await cartCollection.find({ userId }).toArray();
+    
+    const usersCollection = db.collection('users');
+    
+    // Enrich with product details
+    const enrichedItems = await Promise.all(items.map(async (item) => {
+      try {
+        if (!item.productId || !ObjectId.isValid(item.productId)) return null;
+        
+        const product = await workCollection.findOne({ _id: new ObjectId(item.productId) });
+        if (!product) return null;
+        
+        const seller = await usersCollection.findOne(
+          { _id: new ObjectId(product.userId) },
+          { projection: { firstName: 1, lastName: 1, companyName: 1, professionalProfile: 1 } }
+        );
+        
+        return {
+          ...item,
+          product: {
+            ...product,
+            sellerName: seller?.companyName || (seller ? `${seller.firstName} ${seller.lastName}` : 'Unknown Business'),
+            sellerLogo: seller?.professionalProfile?.profilePicture
+          }
+        };
+      } catch (err) {
+        console.error('Error enriching cart item:', err);
+        return null;
+      }
+    }));
+    
+    res.json(enrichedItems.filter(Boolean));
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching cart' });
+  }
+});
+
+app.post('/api/marketplace/cart', checkDB, async (req, res) => {
+  try {
+    const { userId, productId, quantity } = req.body;
+    if (!userId || !productId) return res.status(400).json({ message: 'userId and productId are required' });
+    
+    const cartCollection = db.collection('cart');
+    const qty = Number(quantity) || 1;
+    
+    const existing = await cartCollection.findOne({ userId, productId });
+    if (existing) {
+      await cartCollection.updateOne(
+        { userId, productId },
+        { $set: { quantity: existing.quantity + qty } }
+      );
+    } else {
+      await cartCollection.insertOne({
+        userId,
+        productId,
+        quantity: qty,
+        addedAt: new Date()
+      });
+    }
+    
+    res.json({ success: true, message: 'Added to cart' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error adding to cart' });
+  }
+});
+
+app.put('/api/marketplace/cart', checkDB, async (req, res) => {
+  try {
+    const { userId, productId, quantity } = req.body;
+    if (!userId || !productId) return res.status(400).json({ message: 'userId and productId are required' });
+    
+    const cartCollection = db.collection('cart');
+    const qty = Number(quantity);
+    
+    if (qty <= 0) {
+      await cartCollection.deleteOne({ userId, productId });
+      res.json({ success: true, message: 'Item removed from cart' });
+    } else {
+      await cartCollection.updateOne(
+        { userId, productId },
+        { $set: { quantity: qty } }
+      );
+      res.json({ success: true, message: 'Cart updated' });
+    }
+  } catch (err) {
+    res.status(500).json({ message: 'Error updating cart' });
+  }
+});
+
+app.delete('/api/marketplace/cart', checkDB, async (req, res) => {
+  try {
+    const { userId, productId } = req.query;
+    if (!userId || !productId) return res.status(400).json({ message: 'userId and productId are required' });
+    
+    const cartCollection = db.collection('cart');
+    await cartCollection.deleteOne({ userId, productId });
+    res.json({ success: true, message: 'Item removed from cart' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error deleting item from cart' });
+  }
+});
+
+app.delete('/api/marketplace/cart/clear', checkDB, async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    
+    const cartCollection = db.collection('cart');
+    await cartCollection.deleteMany({ userId });
+    res.json({ success: true, message: 'Cart cleared' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error clearing cart' });
+  }
+});
+
+// --- Wishlist Endpoints ---
+app.get('/api/marketplace/wishlist', checkDB, async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+    
+    const wishlistCollection = db.collection('wishlist');
+    const items = await wishlistCollection.find({ userId }).toArray();
+    
+    const usersCollection = db.collection('users');
+    
+    // Enrich with product details
+    const enrichedItems = await Promise.all(items.map(async (item) => {
+      try {
+        if (!item.productId || !ObjectId.isValid(item.productId)) return null;
+        
+        const product = await workCollection.findOne({ _id: new ObjectId(item.productId) });
+        if (!product) return null;
+        
+        const seller = await usersCollection.findOne(
+          { _id: new ObjectId(product.userId) },
+          { projection: { firstName: 1, lastName: 1, companyName: 1, professionalProfile: 1 } }
+        );
+        
+        return {
+          ...item,
+          product: {
+            ...product,
+            sellerName: seller?.companyName || (seller ? `${seller.firstName} ${seller.lastName}` : 'Unknown Business'),
+            sellerLogo: seller?.professionalProfile?.profilePicture
+          }
+        };
+      } catch (err) {
+        console.error('Error enriching wishlist item:', err);
+        return null;
+      }
+    }));
+    
+    res.json(enrichedItems.filter(Boolean));
+  } catch (err) {
+    res.status(500).json({ message: 'Error fetching wishlist' });
+  }
+});
+
+app.post('/api/marketplace/wishlist', checkDB, async (req, res) => {
+  try {
+    const { userId, productId } = req.body;
+    if (!userId || !productId) return res.status(400).json({ message: 'userId and productId are required' });
+    
+    const wishlistCollection = db.collection('wishlist');
+    const existing = await wishlistCollection.findOne({ userId, productId });
+    
+    if (!existing) {
+      await wishlistCollection.insertOne({
+        userId,
+        productId,
+        addedAt: new Date()
+      });
+    }
+    
+    res.json({ success: true, message: 'Added to wishlist' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error adding to wishlist' });
+  }
+});
+
+app.delete('/api/marketplace/wishlist', checkDB, async (req, res) => {
+  try {
+    const { userId, productId } = req.query;
+    if (!userId || !productId) return res.status(400).json({ message: 'userId and productId are required' });
+    
+    const wishlistCollection = db.collection('wishlist');
+    await wishlistCollection.deleteOne({ userId, productId });
+    res.json({ success: true, message: 'Removed from wishlist' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error removing from wishlist' });
+  }
+});
+
+// --- Saved Sellers & B2B Suppliers Endpoints ---
+app.get('/api/marketplace/saved-sellers', checkDB, async (req, res) => {
+  try {
+    const { userId } = req.query;
+    if (!userId) return res.status(400).json({ message: 'userId is required' });
+
+    const savedSellersCollection = db.collection('saved_sellers');
+    const usersCollection = db.collection('users');
+    const workCollection = db.collection('work');
+
+    const savedDocs = await savedSellersCollection.find({ userId }).sort({ updatedAt: -1 }).toArray();
+
+    const enriched = await Promise.all(savedDocs.map(async (doc) => {
+      try {
+        let query;
+        if (ObjectId.isValid(doc.sellerId) && (doc.sellerId.length === 12 || doc.sellerId.length === 24)) {
+          query = { _id: new ObjectId(doc.sellerId) };
+        } else {
+          query = { username: doc.sellerId };
+        }
+
+        const seller = await usersCollection.findOne(query, {
+          projection: { password: 0, resetOtp: 0 }
+        });
+
+        if (!seller) return null;
+
+        // Count seller products
+        const totalProducts = await workCollection.countDocuments({
+          userId: seller._id.toString(),
+          type: 'products',
+          'data.isPublished': true
+        });
+
+        return {
+          ...doc,
+          seller: {
+            id: seller._id.toString(),
+            name: seller.companyName || `${seller.firstName || ''} ${seller.lastName || ''}`.trim() || seller.username,
+            companyName: seller.companyName || seller.username,
+            username: seller.username,
+            city: seller.city,
+            state: seller.state,
+            gstin: seller.professionalProfile?.gstin || seller.gstin || null,
+            image: seller.professionalProfile?.profilePicture,
+            headline: seller.professionalProfile?.headline,
+            totalProducts
+          }
+        };
+      } catch (err) {
+        console.error('Error enriching saved seller:', err);
+        return null;
+      }
+    }));
+
+    res.json(enriched.filter(Boolean));
+  } catch (err) {
+    console.error('Error fetching saved sellers:', err);
+    res.status(500).json({ message: 'Error fetching saved sellers' });
+  }
+});
+
+app.post('/api/marketplace/saved-sellers', checkDB, async (req, res) => {
+  try {
+    const { userId, sellerId, relationshipTag, customNotes, isAutoConnected } = req.body;
+    if (!userId || !sellerId) return res.status(400).json({ message: 'userId and sellerId are required' });
+
+    // Prevent saving yourself
+    if (userId === sellerId) {
+      return res.status(400).json({ message: 'Cannot save yourself as a supplier' });
+    }
+
+    const savedSellersCollection = db.collection('saved_sellers');
+    const existing = await savedSellersCollection.findOne({ userId, sellerId });
+
+    const tag = relationshipTag || (existing?.relationshipTag) || 'Trusted Seller';
+    const notes = customNotes !== undefined ? customNotes : (existing?.customNotes || '');
+
+    if (existing) {
+      await savedSellersCollection.updateOne(
+        { userId, sellerId },
+        { 
+          $set: { 
+            relationshipTag: tag, 
+            customNotes: notes, 
+            isAutoConnected: isAutoConnected !== undefined ? isAutoConnected : existing.isAutoConnected,
+            updatedAt: new Date() 
+          } 
+        }
+      );
+    } else {
+      await savedSellersCollection.insertOne({
+        userId,
+        sellerId,
+        relationshipTag: tag,
+        customNotes: notes,
+        isAutoConnected: Boolean(isAutoConnected),
+        createdAt: new Date(),
+        updatedAt: new Date()
+      });
+    }
+
+    res.json({ success: true, message: 'Supplier saved successfully' });
+  } catch (err) {
+    console.error('Error saving supplier:', err);
+    res.status(500).json({ message: 'Error saving supplier' });
+  }
+});
+
+app.delete('/api/marketplace/saved-sellers', checkDB, async (req, res) => {
+  try {
+    const { userId, sellerId } = req.query;
+    if (!userId || !sellerId) return res.status(400).json({ message: 'userId and sellerId are required' });
+
+    const savedSellersCollection = db.collection('saved_sellers');
+    await savedSellersCollection.deleteOne({ userId, sellerId });
+    res.json({ success: true, message: 'Supplier removed from saved list' });
+  } catch (err) {
+    console.error('Error deleting saved seller:', err);
+    res.status(500).json({ message: 'Error removing supplier' });
+  }
+});
+
 
 
 // Socket.io Logic
