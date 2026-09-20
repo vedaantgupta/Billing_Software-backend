@@ -102,4 +102,111 @@ ${prompt}`;
   }
 }
 
-module.exports = { getAIResponse };
+async function getProjectAIResponse(mode, prompt, projectContext = {}) {
+  const modelsToTry = ["gemini-2.0-flash", "gemini-2.5-flash", "gemini-1.5-flash-latest"];
+  
+  const systemInstructions = `You are an elite Enterprise Project Management AI Architect and Copilot.
+You assist project managers, tech leads, and teams.
+Your responses MUST BE STRICTLY GROUNDED in the provided project data.
+NEVER fabricate facts or invent tasks that do not exist unless explicitly asked to generate new task suggestions.
+When reporting risks, ALWAYS strictly separate:
+FACT: (exact data points like "3 tasks are overdue", "Total budget variance is +14%")
+AI INFERENCE: (reasoned probability like "Milestone Beta may be delayed by 5 days")
+
+Mode requested: ${mode}
+`;
+
+  const contextPrompt = `PROJECT CONTEXT:
+${JSON.stringify(projectContext, null, 2)}
+
+USER PROMPT / TASK:
+${prompt || `Perform ${mode} analysis`}
+`;
+
+  try {
+    for (const modelName of modelsToTry) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          systemInstruction: systemInstructions
+        });
+
+        const result = await model.generateContent(contextPrompt);
+        const text = result.response.text();
+        if (text) return text;
+      } catch (err) {
+        console.warn(`[Project AI] Model ${modelName} failed:`, err.message);
+        if (err.message.includes('429') || err.message.includes('Quota exceeded')) break;
+      }
+    }
+  } catch (err) {
+    console.error("[Project AI] Gemini request failed:", err);
+  }
+
+  // Resilient deterministic fallback if AI service is offline or rate-limited
+  return generateDeterministicFallback(mode, prompt, projectContext);
+}
+
+function generateDeterministicFallback(mode, prompt, context) {
+  const project = context.project || {};
+  const tasks = context.tasks || [];
+  const milestones = context.milestones || [];
+  
+  const totalTasks = tasks.length;
+  const completedTasks = tasks.filter(t => t.status === 'Done' || t.status === 'Completed').length;
+  const inProgressTasks = tasks.filter(t => t.status === 'In Progress').length;
+  const now = new Date();
+  const overdueTasks = tasks.filter(t => t.dueDate && new Date(t.dueDate) < now && t.status !== 'Done');
+  const blockedTasks = tasks.filter(t => t.status === 'Blocked');
+  const progressPct = totalTasks > 0 ? Math.round((completedTasks / totalTasks) * 100) : 0;
+
+  if (mode === 'summary') {
+    return `### Project Executive Summary: ${project.name || 'Current Project'}
+**Overall Progress**: ${progressPct}% (${completedTasks}/${totalTasks} tasks completed)
+**Status**: ${project.status || 'Active'}
+**Health**: ${overdueTasks.length > 0 || blockedTasks.length > 0 ? 'Needs Attention' : 'On Track'}
+
+#### Key Metrics:
+- **Active Tasks**: ${inProgressTasks}
+- **Overdue Tasks**: ${overdueTasks.length}
+- **Blocked Tasks**: ${blockedTasks.length}
+- **Upcoming Milestones**: ${milestones.filter(m => m.status !== 'Achieved').length}
+
+#### Critical Observations:
+${overdueTasks.length > 0 ? `- **Overdue Items**: ${overdueTasks.slice(0, 3).map(t => t.name).join(', ')}` : '- Schedule adherence is currently healthy.'}
+${blockedTasks.length > 0 ? `- **Blockers**: ${blockedTasks.map(t => t.name).join(', ')} require immediate unblocking.` : '- No active blockers recorded.'}`;
+  }
+
+  if (mode === 'breakdown') {
+    return JSON.stringify([
+      { name: "Requirements Analysis & Architecture Plan", type: "Task", priority: "High", estimatedHours: 8, subtasks: [{ title: "Scope definition" }, { title: "Technical specification" }] },
+      { name: "Core Implementation & Feature Setup", type: "Task", priority: "High", estimatedHours: 16, subtasks: [{ title: "Frontend components" }, { title: "Backend endpoints" }] },
+      { name: "Integration, Review & QA Testing", type: "Task", priority: "Medium", estimatedHours: 8, subtasks: [{ title: "Unit & E2E verification" }, { title: "Bug fixes" }] },
+      { name: "Deployment & Documentation", type: "Task", priority: "Medium", estimatedHours: 4, subtasks: [{ title: "Release notes" }, { title: "User walkthrough" }] }
+    ], null, 2);
+  }
+
+  if (mode === 'risks') {
+    return `### Project Risk & Health Analysis
+
+#### FACTS:
+- ${overdueTasks.length} tasks are currently past their due date.
+- ${blockedTasks.length} tasks are in Blocked status.
+- Project completion is at ${progressPct}% with ${totalTasks - completedTasks} remaining tasks.
+
+#### AI INFERENCE:
+- ${overdueTasks.length > 0 ? 'Overdue tasks in the critical path present a moderate risk of delaying upcoming milestones.' : 'Low risk of schedule slippage based on current milestone dates.'}
+- Resource allocation should focus on resolving ${blockedTasks.length ? 'blocked tasks' : 'high-priority items'}.`;
+  }
+
+  if (mode === 'scheduling') {
+    return `### Scheduling & Dependency Assessment
+- Analyzed ${totalTasks} tasks and ${milestones.length} milestones.
+- Recommended Action: Reassign or extend target dates for ${overdueTasks.length} overdue tasks.
+- Prioritize Finish-to-Start predecessor dependencies to prevent cascading bottlenecks.`;
+  }
+
+  return `Based on live project data: Project "${project.name || 'Project'}" has ${totalTasks} tasks (${completedTasks} completed, ${overdueTasks.length} overdue). Budget allocated: ₹${Number(project.budget || 0).toLocaleString()}.`;
+}
+
+module.exports = { getAIResponse, getProjectAIResponse };

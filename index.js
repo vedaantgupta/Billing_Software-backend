@@ -25,7 +25,7 @@ const { Server } = require('socket.io');
 const { MongoClient, ObjectId } = require('mongodb');
 const cors = require('cors');
 const multer = require('multer');
-const { getAIResponse } = require('./aiService');
+const { getAIResponse, getProjectAIResponse } = require('./aiService');
 
 const app = express();
 const server = http.createServer(app);
@@ -317,15 +317,12 @@ app.get('/api/work/:userId', async (req, res) => {
   }
 });
 
-// Update Work
+// Update Work (Safe Merge)
 app.patch('/api/work/:userId/:id', async (req, res) => {
   if (!isDbConnected) return res.status(503).json({ message: 'DB not connected' });
   try {
     const { userId, id } = req.params;
     const updates = req.body;
-
-    // Preserve original data.id — only fall back to the URL id if no id in updates
-    const dataWithId = { ...updates, id: updates.id || id };
 
     const query = { userId };
     if (ObjectId.isValid(id) && (String(id).length === 12 || String(id).length === 24)) {
@@ -334,17 +331,26 @@ app.patch('/api/work/:userId/:id', async (req, res) => {
       query['data.id'] = id;
     }
 
-    const result = await workCollection.updateOne(
-      query,
-      { $set: { 'data': dataWithId, timestamp: new Date() } }
-    );
-
-    if (result.matchedCount === 0) {
+    const existing = await workCollection.findOne(query);
+    if (!existing) {
       return res.status(404).json({ message: 'Item not found' });
     }
 
-    res.json({ message: 'Updated successfully' });
+    // Safely merge existing data so partial updates (e.g. task status or priority) do not wipe other fields
+    const mergedData = {
+      ...(existing.data || {}),
+      ...updates,
+      id: existing.data?.id || updates.id || id
+    };
+
+    await workCollection.updateOne(
+      query,
+      { $set: { 'data': mergedData, timestamp: new Date() } }
+    );
+
+    res.json({ message: 'Updated successfully', data: mergedData });
   } catch (err) {
+    console.error('Error updating work:', err);
     res.status(500).json({ message: 'Error updating work' });
   }
 });
@@ -785,6 +791,69 @@ app.post('/api/ai/chat', async (req, res) => {
   } catch (err) {
     console.error('AI Route error:', err);
     res.status(500).json({ message: 'Error communicating with AI assistant' });
+  }
+});
+
+// Dedicated Project Copilot Endpoint
+app.post('/api/ai/project-copilot', async (req, res) => {
+  try {
+    const { mode = 'summary', prompt, projectContext } = req.body;
+    console.log(`[Project AI] Copilot mode: ${mode}`);
+    const response = await getProjectAIResponse(mode, prompt, projectContext);
+    res.json({ response, mode });
+  } catch (err) {
+    console.error('Project Copilot Error:', err);
+    res.status(500).json({ message: 'Error running project AI copilot: ' + err.message });
+  }
+});
+
+// Project Intake Form Submission (Auto-creates task)
+app.post('/api/project-forms/submit', async (req, res) => {
+  if (!isDbConnected) return res.status(503).json({ message: 'DB not connected' });
+  try {
+    const { projectId, userId, formId, formTitle, formData, defaultAssigneeId, defaultPriority } = req.body;
+    if (!projectId || !userId) {
+      return res.status(400).json({ message: 'projectId and userId are required' });
+    }
+
+    const taskId = Date.now().toString();
+    const taskName = formData.title || formData.name || formData.subject || `Intake: ${formTitle || 'New Request'}`;
+    const description = `Submitted via Form: "${formTitle || 'Intake Form'}"\n\n` +
+      Object.entries(formData)
+        .map(([k, v]) => `**${k}**: ${v}`)
+        .join('\n');
+
+    const newTask = {
+      id: taskId,
+      projectId,
+      name: taskName,
+      description,
+      status: 'To Do',
+      priority: defaultPriority || 'Medium',
+      type: 'Task',
+      assigneeIds: defaultAssigneeId ? [defaultAssigneeId] : [],
+      inBacklog: false,
+      createdAt: new Date().toISOString(),
+      sourceFormId: formId,
+      formData
+    };
+
+    await workCollection.insertOne({
+      userId,
+      type: 'project_tasks',
+      data: newTask,
+      timestamp: new Date()
+    });
+
+    // Notify project via Socket
+    if (io) {
+      io.to(projectId).emit('project_data_refreshed', { projectId, action: 'form_submitted', taskId });
+    }
+
+    res.status(201).json({ message: 'Form submitted successfully', taskId, task: newTask });
+  } catch (err) {
+    console.error('Error submitting project form:', err);
+    res.status(500).json({ message: 'Error processing form submission' });
   }
 });
 
