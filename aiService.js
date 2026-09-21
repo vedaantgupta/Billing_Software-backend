@@ -1,8 +1,9 @@
 /**
- * Antigravity AI Engine for Enterprise Billing & Management Software
+ * Business AI Copilot Engine for Enterprise Billing & Management Software
  * Powered by Hugging Face Serverless Router (Llama-3.3-70B, Qwen2.5-72B, Llama-3.1-8B)
- * Delivers ChatGPT-4 & Gemini-level deep intelligence, Autonomous Actions with Permission,
- * and Smart Interactive Clarification Questionnaire (Google Antigravity-inspired).
+ * Delivers full ChatGPT-4 & Gemini-level intelligence, typo/misspelling tolerance,
+ * dynamic real date injection, Autonomous Actions with user permission,
+ * and Smart Interactive Clarification Questionnaire.
  */
 
 const HF_ROUTER_URL = 'https://router.huggingface.co/v1/chat/completions';
@@ -23,6 +24,15 @@ const MODELS_TO_TRY = [
   "Qwen/Qwen2.5-72B-Instruct",
   "meta-llama/Llama-3.1-8B-Instruct"
 ];
+
+function sanitizeDate(dateVal, fallbackIso) {
+  if (!dateVal || typeof dateVal !== 'string') return fallbackIso;
+  const lower = dateVal.toLowerCase();
+  if (lower.includes('current') || lower.includes('today') || lower.includes('date') || lower.includes('tbd')) {
+    return fallbackIso;
+  }
+  return dateVal;
+}
 
 /**
  * Normalizes raw extracted action data into the software's standard database schema.
@@ -87,12 +97,15 @@ function normalizeActionData(actionType, rawData = {}) {
       const invPrefix = docType.toLowerCase().includes('purchase') ? 'PO' : (docType.toLowerCase().includes('quotation') ? 'QT' : 'INV');
       const invoiceNumber = rawData.invoiceNumber || rawData.invoice_number || `${invPrefix}-${Math.floor(1000 + Math.random() * 9000)}`;
 
+      const realDate = sanitizeDate(rawData.date, todayStr);
+      const realDueDate = sanitizeDate(rawData.dueDate || rawData.due_date, realDate);
+
       return {
         id: timestampId,
         docType,
         invoiceNumber,
-        date: rawData.date || todayStr,
-        dueDate: rawData.dueDate || rawData.due_date || todayStr,
+        date: realDate,
+        dueDate: realDueDate,
         customerName,
         billingAddress: rawData.address || rawData.billingAddress || '',
         items: normalizedItems,
@@ -175,7 +188,7 @@ function normalizeActionData(actionType, rawData = {}) {
         role: rawData.role || rawData.position || rawData.designation || 'Staff Member',
         salary: Number(rawData.salary || 0),
         status: 'Active',
-        joiningDate: rawData.joiningDate || rawData.joining_date || todayStr
+        joiningDate: sanitizeDate(rawData.joiningDate || rawData.joining_date, todayStr)
       };
     }
 
@@ -190,8 +203,8 @@ function normalizeActionData(actionType, rawData = {}) {
         projectId: rawData.projectId || generatedId,
         clientName: rawData.clientName || rawData.client_name || rawData.customerName || '',
         status: rawData.status || 'Planned',
-        startDate: rawData.startDate || rawData.start_date || todayStr,
-        endDate: rawData.endDate || rawData.end_date || '',
+        startDate: sanitizeDate(rawData.startDate || rawData.start_date, todayStr),
+        endDate: sanitizeDate(rawData.endDate || rawData.end_date, ''),
         budget,
         priority: rawData.priority || 'Medium',
         description: rawData.description || `Project: ${name}`,
@@ -208,7 +221,7 @@ function normalizeActionData(actionType, rawData = {}) {
         status: rawData.status || 'To Do',
         priority: rawData.priority || 'Medium',
         type: 'Task',
-        dueDate: rawData.dueDate || rawData.due_date || '',
+        dueDate: sanitizeDate(rawData.dueDate || rawData.due_date, ''),
         createdAt: now.toISOString()
       };
     }
@@ -222,7 +235,7 @@ function normalizeActionData(actionType, rawData = {}) {
         category,
         amount,
         grandTotal: amount,
-        date: rawData.date || todayStr,
+        date: sanitizeDate(rawData.date, todayStr),
         paymentMode: rawData.paymentMode || rawData.payment_mode || rawData.paymentMethod || 'Cash',
         notes: rawData.notes || rawData.description || `Expense recorded for ${category}`
       };
@@ -237,7 +250,7 @@ function normalizeActionData(actionType, rawData = {}) {
         contactName: rawData.contactName || rawData.contact_name || rawData.name || 'Unknown Contact',
         amount,
         type,
-        date: rawData.date || todayStr,
+        date: sanitizeDate(rawData.date, todayStr),
         description: rawData.description || (type === 'dr' ? 'Receivable entry' : 'Payable entry')
       };
     }
@@ -249,10 +262,8 @@ function normalizeActionData(actionType, rawData = {}) {
 
 /**
  * Main AI Assistant function.
- * Evaluates business context and user prompt.
- * Generates ChatGPT/Gemini-level conversational intelligence,
- * or outputs clarification questions (when info is missing),
- * or drafts actionable proposals requiring confirmation.
+ * Delivers full ChatGPT/Gemini conversational depth, typo tolerance,
+ * real date accuracy, interactive question cards, and action proposals.
  */
 async function getAIResponse(prompt, history = [], businessContext = "") {
   const token = getHfToken();
@@ -260,7 +271,30 @@ async function getAIResponse(prompt, history = [], businessContext = "") {
     ? businessContext.substring(0, 25000) + "... [DATA TRUNCATED FOR LENGTH]"
     : businessContext;
 
-  const systemInstruction = `You are "Antigravity AI" — an elite, ChatGPT-4 & Gemini-level Business Intelligence Architect and Autonomous Copilot for Enterprise Billing & Management Software.
+  const now = new Date();
+  const realDateFormatted = now.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }); // e.g. "21 Sep 2026"
+  const realIsoDate = now.toISOString().split('T')[0]; // "2026-09-21"
+  const realDayOfWeek = now.toLocaleDateString('en-IN', { weekday: 'long' });
+
+  const systemInstruction = `You are "Business AI Copilot" — an elite, ChatGPT-4 & Gemini-level Business Intelligence Architect and Autonomous Copilot for Enterprise Billing & Management Software.
+
+CURRENT REAL SYSTEM DATE & TIME:
+- Today's Real Date: ${realDateFormatted} (${realIsoDate})
+- Day of Week: ${realDayOfWeek}
+- CRITICAL DATE RULE:
+  Whenever stating dates in your responses, tables, summaries, or document proposals, ALWAYS write the real date: "${realDateFormatted}".
+  NEVER write placeholder words like "Current Date", "Today's Date", "[Date]", or "TBD". Always print the real date: "${realDateFormatted}".
+
+INTELLIGENT SPELLING & TYPO TOLERANCE:
+You are an advanced AI. Real users frequently make typos, typing errors, phonetic spelling mistakes, and use informal Hinglish or abbreviations.
+You must effortlessly understand and correct them without complaining:
+- "invois", "invoce", "bil", "chalan" -> Invoice / Bill / Delivery Challan
+- "custmr", "clint", "party", "khata", "udhar" -> Customer / Contact / Digital Ledger
+- "prodct", "item", "mal", "saman" -> Product / Inventory
+- "leptop", "chair", "tabl", "mobail" -> Laptop, Chair, Table, Mobile
+- "staf", "imploi", "naukar", "vetan" -> Staff / Employee / Salary
+- "roj ka kharcha", "expens", "kharch" -> Daily Expense
+Infer the user's intended meaning seamlessly and execute accurately!
 
 YOUR CORE PILLARS:
 1. DEEP INTELLIGENCE & MASTERY (ANSWER EVERYTHING):
@@ -302,7 +336,7 @@ YOUR CORE PILLARS:
      }
      ACTION_PROPOSAL>>>
 
-   - SCENARIO B: Incomplete Information (Google Antigravity Asking Modal)
+   - SCENARIO B: Incomplete Information (Interactive Asking Modal)
      When user asks to create/record something but DOES NOT give enough details (e.g. "I want to create an invoice", "Add a new product", "Add staff"):
      Do NOT hallucinate fake numbers. Explain what is needed, and append an interactive asking card:
      <<<ASK_QUESTION
@@ -320,7 +354,6 @@ LIVE BUSINESS DATA CONTEXT:
 ${safeBusinessContext}
 `;
 
-  // Build formatted messages
   const formattedMessages = [{ role: "system", content: systemInstruction }];
 
   const recentHistory = history.slice(-8);
@@ -339,7 +372,7 @@ ${safeBusinessContext}
 
   for (const modelName of MODELS_TO_TRY) {
     try {
-      console.log(`[Antigravity AI] Querying model: ${modelName}`);
+      console.log(`[Business AI] Querying model: ${modelName}`);
       const res = await fetch(HF_ROUTER_URL, {
         method: 'POST',
         headers: {
@@ -356,7 +389,7 @@ ${safeBusinessContext}
 
       if (!res.ok) {
         const errText = await res.text();
-        console.warn(`[Antigravity AI] Model ${modelName} returned status ${res.status}: ${errText.slice(0, 150)}`);
+        console.warn(`[Business AI] Model ${modelName} returned status ${res.status}: ${errText.slice(0, 150)}`);
         lastError = new Error(`HF HTTP ${res.status}: ${errText}`);
         continue;
       }
@@ -365,7 +398,7 @@ ${safeBusinessContext}
       const rawContent = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
 
       if (!rawContent) {
-        console.warn(`[Antigravity AI] Model ${modelName} returned empty text.`);
+        console.warn(`[Business AI] Model ${modelName} returned empty text.`);
         continue;
       }
 
@@ -400,7 +433,7 @@ ${safeBusinessContext}
             };
           }
         } catch (e) {
-          console.warn('[Antigravity AI] Failed to parse ACTION_PROPOSAL JSON:', e.message);
+          console.warn('[Business AI] Failed to parse ACTION_PROPOSAL JSON:', e.message);
         }
         responseText = rawContent.substring(0, actionIdxStart).trim();
       }
@@ -425,19 +458,19 @@ ${safeBusinessContext}
             };
           }
         } catch (e) {
-          console.warn('[Antigravity AI] Failed to parse ASK_QUESTION JSON:', e.message);
+          console.warn('[Business AI] Failed to parse ASK_QUESTION JSON:', e.message);
         }
         responseText = rawContent.substring(0, askIdxStart).trim();
       }
 
-      console.log(`[Antigravity AI] Success with ${modelName}. Action: ${!!actionObj}, Question: ${!!questionObj}`);
+      console.log(`[Business AI] Success with ${modelName}. Action: ${!!actionObj}, Question: ${!!questionObj}`);
       return {
         response: responseText,
         action: actionObj,
         question: questionObj
       };
     } catch (err) {
-      console.error(`[Antigravity AI] Error with model ${modelName}:`, err.message);
+      console.error(`[Business AI] Error with model ${modelName}:`, err.message);
       lastError = err;
     }
   }
@@ -508,7 +541,7 @@ ${prompt || `Perform ${mode} analysis`}
 
   for (const modelName of MODELS_TO_TRY) {
     try {
-      console.log(`[Project Copilot HF] Attempting with model: ${modelName}`);
+      console.log(`[Project Copilot] Attempting with model: ${modelName}`);
       const res = await fetch(HF_ROUTER_URL, {
         method: 'POST',
         headers: {
@@ -532,7 +565,7 @@ ${prompt || `Perform ${mode} analysis`}
         if (text) return text;
       }
     } catch (err) {
-      console.warn(`[Project Copilot HF] Model ${modelName} failed:`, err.message);
+      console.warn(`[Project Copilot] Model ${modelName} failed:`, err.message);
     }
   }
 
