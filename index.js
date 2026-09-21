@@ -25,7 +25,7 @@ const { Server } = require('socket.io');
 const { MongoClient, ObjectId } = require('mongodb');
 const cors = require('cors');
 const multer = require('multer');
-const { getAIResponse, getProjectAIResponse } = require('./aiService');
+const { getAIResponse, getProjectAIResponse, normalizeActionData } = require('./aiService');
 
 const app = express();
 const server = http.createServer(app);
@@ -786,11 +786,185 @@ app.post('/api/ai/chat', async (req, res) => {
     }
 
     console.log(`[AI] Context length: ${businessContext.length}`);
-    const response = await getAIResponse(prompt, history || [], businessContext);
-    res.json({ response });
+
+    // Check if user is conversationally confirming/rejecting a pending action
+    const trimmedPrompt = prompt.trim().toLowerCase();
+    const isAffirmative = /^(yes|confirm|proceed|ok|sure|approve|do it|create it|go ahead|yep|yeah)\b/i.test(trimmedPrompt);
+    const isNegative = /^(no|cancel|stop|dont|don't|reject|abort|nevermind)\b/i.test(trimmedPrompt);
+
+    // Look for pending action passed directly or from recent assistant history
+    let activePendingAction = req.body.pendingAction || null;
+    if (!activePendingAction && Array.isArray(history) && history.length > 0) {
+      for (let i = history.length - 1; i >= 0; i--) {
+        if (history[i].action && history[i].action.status === 'pending') {
+          activePendingAction = history[i].action;
+          break;
+        }
+      }
+    }
+
+    if (activePendingAction && isAffirmative) {
+      console.log(`[AI] Conversational confirmation received for action: ${activePendingAction.type}`);
+      const savedItem = await executeActionInDatabase(userId, activePendingAction, req.body.userName || 'You');
+      const route = getRouteForCollection(activePendingAction.collection);
+
+      return res.json({
+        response: `✅ **Action Confirmed & Executed!**\n\nSuccessfully created **${activePendingAction.label || activePendingAction.data?.name || 'record'}**.\n\nYou can view it in [**${getCollectionLabel(activePendingAction.collection)}**](${route}).`,
+        action: {
+          ...activePendingAction,
+          status: 'executed',
+          savedItem
+        }
+      });
+    }
+
+    if (activePendingAction && isNegative) {
+      console.log(`[AI] Conversational cancellation for action: ${activePendingAction.type}`);
+      return res.json({
+        response: `❌ Action cancelled. No data was modified. How else can I assist you?`,
+        action: {
+          ...activePendingAction,
+          status: 'cancelled'
+        }
+      });
+    }
+
+    // Call Hugging Face AI
+    const aiResult = await getAIResponse(prompt, history || [], businessContext);
+
+    res.json({
+      response: aiResult.response,
+      action: aiResult.action
+    });
   } catch (err) {
     console.error('AI Route error:', err);
-    res.status(500).json({ message: 'Error communicating with AI assistant' });
+    res.status(500).json({ message: 'Error communicating with AI assistant: ' + err.message });
+  }
+});
+
+// Helper for UI collection label
+function getCollectionLabel(col) {
+  switch (col) {
+    case 'documents': return 'Documents';
+    case 'products': return 'Products & Inventory';
+    case 'contacts': return 'Contacts';
+    case 'staff': return 'Staff';
+    case 'projects': return 'Projects';
+    case 'project_tasks': return 'Project Tasks';
+    case 'expenses': return 'Daily Expenses';
+    case 'ledger_transactions': return 'Digital Ledger';
+    default: return 'Module';
+  }
+}
+
+function getRouteForCollection(col) {
+  switch (col) {
+    case 'documents': return '/documents';
+    case 'products': return '/products';
+    case 'contacts': return '/contacts';
+    case 'staff': return '/staff';
+    case 'projects': return '/projects';
+    case 'project_tasks': return '/projects';
+    case 'expenses': return '/expenses/daily';
+    case 'ledger_transactions': return '/ledger';
+    default: return '/';
+  }
+}
+
+async function executeActionInDatabase(userId, action, userName = 'You') {
+  if (!isDbConnected) throw new Error('Database is offline');
+  if (!userId || !action || !action.collection || !action.data) {
+    throw new Error('Invalid action payload or missing userId');
+  }
+
+  const timestampId = action.data.id || Date.now().toString();
+  const normalizedData = {
+    ...action.data,
+    id: timestampId,
+    createdAt: action.data.createdAt || new Date().toISOString()
+  };
+
+  const insertDoc = {
+    userId,
+    type: action.collection,
+    data: normalizedData,
+    timestamp: new Date()
+  };
+
+  const result = await workCollection.insertOne(insertDoc);
+
+  // If Sale Invoice, mirror into salesCollection
+  if (action.collection === 'documents' && (normalizedData.docType === 'Sale Invoice' || normalizedData.docType === 'Invoice')) {
+    try {
+      await salesCollection.insertOne({
+        userId,
+        customerName: normalizedData.customerName || 'Customer',
+        amount: Number(normalizedData.grandTotal || normalizedData.total || 0),
+        date: normalizedData.date || new Date().toISOString().split('T')[0],
+        status: normalizedData.status || 'Unpaid',
+        invoiceNumber: normalizedData.invoiceNumber || `INV-${timestampId}`,
+        items: normalizedData.items || [],
+        createdAt: new Date()
+      });
+    } catch (e) {
+      console.warn('[AI Action] Failed to mirror to salesCollection:', e.message);
+    }
+  }
+
+  // Socket notification for projects / tasks
+  if (io && (action.collection === 'projects' || action.collection === 'project_tasks')) {
+    io.emit('project_data_refreshed', {
+      action: 'created',
+      collection: action.collection,
+      id: timestampId
+    });
+  }
+
+  // Activity Log
+  try {
+    await workCollection.insertOne({
+      userId,
+      type: 'activityLogs',
+      data: {
+        id: Date.now().toString(),
+        time: new Date().toLocaleString(),
+        action: action.label || `Created ${action.collection} via AI`,
+        user: userName
+      },
+      timestamp: new Date()
+    });
+  } catch (e) {
+    console.warn('[AI Action] Activity log error:', e.message);
+  }
+
+  return {
+    ...normalizedData,
+    _dbId: result.insertedId
+  };
+}
+
+// Dedicated AI Action Execution Endpoint (Triggered on user clicking Confirm in UI)
+app.post('/api/ai/action/execute', async (req, res) => {
+  if (!isDbConnected) return res.status(503).json({ message: 'DB not connected' });
+  try {
+    const { userId, action, userName = 'You' } = req.body;
+    if (!userId || !action) {
+      return res.status(400).json({ message: 'userId and action are required' });
+    }
+
+    console.log(`[AI Action] User ${userId} confirmed action: ${action.label || action.type}`);
+    const savedItem = await executeActionInDatabase(userId, action, userName);
+    const route = getRouteForCollection(action.collection);
+
+    res.json({
+      success: true,
+      message: `Successfully executed: ${action.label || 'Action completed'}`,
+      item: savedItem,
+      route
+    });
+  } catch (err) {
+    console.error('[AI Action] Execute error:', err);
+    res.status(500).json({ message: 'Failed to execute action: ' + err.message });
   }
 });
 
