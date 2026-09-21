@@ -787,10 +787,10 @@ app.post('/api/ai/chat', async (req, res) => {
 
     console.log(`[AI] Context length: ${businessContext.length}`);
 
-    // Check if user is conversationally confirming/rejecting a pending action
+    // Check if user is conversationally confirming/rejecting a pending action or question
     const trimmedPrompt = prompt.trim().toLowerCase();
     const isAffirmative = /^(yes|confirm|proceed|ok|sure|approve|do it|create it|go ahead|yep|yeah)\b/i.test(trimmedPrompt);
-    const isNegative = /^(no|cancel|stop|dont|don't|reject|abort|nevermind)\b/i.test(trimmedPrompt);
+    const isNegative = /^(no|cancel|stop|dont|don't|reject|abort|nevermind|i don't want|dont want|i dont want|not now)\b/i.test(trimmedPrompt);
 
     // Look for pending action passed directly or from recent assistant history
     let activePendingAction = req.body.pendingAction || null;
@@ -814,27 +814,28 @@ app.post('/api/ai/chat', async (req, res) => {
           ...activePendingAction,
           status: 'executed',
           savedItem
-        }
+        },
+        question: null
       });
     }
 
-    if (activePendingAction && isNegative) {
-      console.log(`[AI] Conversational cancellation for action: ${activePendingAction.type}`);
+    if ((activePendingAction || req.body.hasActiveQuestion) && isNegative) {
+      console.log(`[AI] User cancelled pending action/question: "${trimmedPrompt}"`);
       return res.json({
-        response: `❌ Action cancelled. No data was modified. How else can I assist you?`,
-        action: {
-          ...activePendingAction,
-          status: 'cancelled'
-        }
+        response: `❌ Action cancelled. I have dismissed this request and no changes were made to your data. What else can I assist you with?`,
+        action: activePendingAction ? { ...activePendingAction, status: 'cancelled' } : null,
+        question: null,
+        cancelled: true
       });
     }
 
-    // Call Hugging Face AI
+    // Call Antigravity AI Engine
     const aiResult = await getAIResponse(prompt, history || [], businessContext);
 
     res.json({
       response: aiResult.response,
-      action: aiResult.action
+      action: aiResult.action,
+      question: aiResult.question
     });
   } catch (err) {
     console.error('AI Route error:', err);

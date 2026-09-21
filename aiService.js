@@ -1,11 +1,16 @@
 /**
- * Hugging Face AI Service for Billing & Management System
+ * Antigravity AI Engine for Enterprise Billing & Management Software
  * Powered by Hugging Face Serverless Router (Llama-3.3-70B, Qwen2.5-72B, Llama-3.1-8B)
- * Supports Autonomous Business Actions with User Permission Confirmation
+ * Delivers ChatGPT-4 & Gemini-level deep intelligence, Autonomous Actions with Permission,
+ * and Smart Interactive Clarification Questionnaire (Google Antigravity-inspired).
  */
 
 const HF_ROUTER_URL = 'https://router.huggingface.co/v1/chat/completions';
+
 function getHfToken() {
+  if (!process.env.HF_TOKEN && !process.env.HUGGINGFACE_API_KEY) {
+    try { require('dotenv').config(); } catch(e) {}
+  }
   const token = process.env.HF_TOKEN || process.env.HUGGINGFACE_API_KEY;
   if (!token) {
     console.error("[HuggingFace AI] HF_TOKEN is not defined in environment variables!");
@@ -59,8 +64,8 @@ function normalizeActionData(actionType, rawData = {}) {
 
       // If no items were detailed, synthesize from provided total
       if (normalizedItems.length === 0) {
-        const directTotal = Number(rawData.total || rawData.amount || rawData.grandTotal || 0);
-        const taxRate = Number(rawData.tax || rawData.gst_percentage || 18);
+        const directTotal = Number(rawData.total || rawData.amount || rawData.grandTotal || rawData.subtotal || 0);
+        const taxRate = Number(rawData.tax || rawData.gst || rawData.gst_percentage || 18);
         const derivedSub = directTotal > 0 ? (directTotal / (1 + taxRate / 100)) : 0;
         const derivedTax = directTotal - derivedSub;
 
@@ -190,7 +195,7 @@ function normalizeActionData(actionType, rawData = {}) {
         budget,
         priority: rawData.priority || 'Medium',
         description: rawData.description || `Project: ${name}`,
-        color: '#4f46e5'
+        color: '#6366f1'
       };
     }
 
@@ -245,8 +250,9 @@ function normalizeActionData(actionType, rawData = {}) {
 /**
  * Main AI Assistant function.
  * Evaluates business context and user prompt.
- * If user wants an action executed, generates an action proposal requiring confirmation.
- * Output is structured JSON with `response` (markdown text) and `action` (executable payload or null).
+ * Generates ChatGPT/Gemini-level conversational intelligence,
+ * or outputs clarification questions (when info is missing),
+ * or drafts actionable proposals requiring confirmation.
  */
 async function getAIResponse(prompt, history = [], businessContext = "") {
   const token = getHfToken();
@@ -254,66 +260,70 @@ async function getAIResponse(prompt, history = [], businessContext = "") {
     ? businessContext.substring(0, 25000) + "... [DATA TRUNCATED FOR LENGTH]"
     : businessContext;
 
-  const systemInstruction = `You are the Autonomous AI Business Assistant for a Professional Enterprise Billing & Management Software.
-You are equipped with full knowledge of the user's business and can both answer questions AND propose/execute actions on their behalf.
+  const systemInstruction = `You are "Antigravity AI" — an elite, ChatGPT-4 & Gemini-level Business Intelligence Architect and Autonomous Copilot for Enterprise Billing & Management Software.
 
-SOFTWARE MODULES & ROUTES:
-- Dashboard: [/]
-- Documents (Invoices, Quotations, Bills, Delivery Challans): [/documents]
-- Products & Inventory: [/products]
-- Contacts (Customers & Vendors): [/contacts]
-- Staff / Human Resources: [/staff]
-- Digital Ledger (Udhaar & Khata): [/ledger]
-- Project Management: [/projects]
-- Daily Expenses: [/expenses/daily]
-- Loan Manager: [/loans]
-- Bank Accounts: [/banks]
-- Reports & Analytics: [/reports]
+YOUR CORE PILLARS:
+1. DEEP INTELLIGENCE & MASTERY (ANSWER EVERYTHING):
+   - Answer ANY business, financial, GST, tax, pricing, inventory, accounting, legal, tech, coding, or management questions with immense clarity, depth, and precision.
+   - You can explain complex concepts, calculate taxes, analyze profits, recommend strategies, draft professional emails or notices, and break down problems step-by-step.
+   - Use rich, elegant markdown with headings, bold terms, bullet points, and tables.
+   - Whenever mentioning software pages, include clickable bold markdown links:
+     - Dashboard: [**Dashboard**](/)
+     - Documents & Invoices: [**Documents**](/documents)
+     - Products & Inventory: [**Inventory**](/products)
+     - Contacts (Customers & Vendors): [**Contacts**](/contacts)
+     - Staff & Payroll: [**Staff**](/staff)
+     - Digital Ledger (Udhaar/Khata): [**Digital Ledger**](/ledger)
+     - Project Management: [**Projects**](/projects)
+     - Daily Expenses: [**Daily Expenses**](/expenses/daily)
+     - Reports & Analytics: [**Reports**](/reports)
+     - Banking: [**Bank Accounts**](/banks)
+     - Loans: [**Loans**](/loans)
 
-CRITICAL ACTION CAPABILITY:
-You have the power to create and manage:
-1. Documents (Sale Invoices, Purchase Invoices, Quotations, Delivery Challans, Bills) -> action type: "create_document", collection: "documents"
-2. Products / Inventory Items -> action type: "create_product", collection: "products"
-3. Contacts (Customers & Vendors) -> action type: "create_contact", collection: "contacts"
-4. Staff Members -> action type: "create_staff", collection: "staff"
-5. Projects -> action type: "create_project", collection: "projects"
-6. Project Tasks -> action type: "create_project_task", collection: "project_tasks"
-7. Expenses -> action type: "create_expense", collection: "expenses"
-8. Digital Ledger Entries -> action type: "create_ledger_entry", collection: "ledger_transactions"
+2. AUTONOMOUS ACTIONS WITH USER PERMISSION:
+   - You have full authority to prepare & execute database actions for:
+     1. Documents (Sale Invoices, Purchase Invoices, Quotations, Purchase Orders)
+     2. Products & Inventory items
+     3. Contacts (Customers & Vendors)
+     4. Staff members
+     5. Projects & Project Tasks
+     6. Daily Expenses
+     7. Digital Ledger transactions
+   
+   - SCENARIO A: Complete Information Provided
+     When user asks to create/record something and provides necessary details:
+     Provide a clear explanation and preview in markdown, and at the end of your response append:
+     <<<ACTION_PROPOSAL
+     {
+       "type": "create_document" | "create_product" | "create_contact" | "create_staff" | "create_project" | "create_project_task" | "create_expense" | "create_ledger_entry",
+       "collection": "documents" | "products" | "contacts" | "staff" | "projects" | "project_tasks" | "expenses" | "ledger_transactions",
+       "label": "Confirm & Create Sale Invoice for Sharma Traders (₹7,080)",
+       "data": { ...extracted fields... }
+     }
+     ACTION_PROPOSAL>>>
 
-CRITICAL SAFETY & PERMISSION DIRECTIVE:
-All data-altering actions REQUIRE explicit user permission before saving to the database.
-When a user asks you to perform an action (e.g. "Create invoice for X", "Add product Y", "Add contact Z", "Create project W", "Record expense"):
-1. Prepare the exact data payload in the "action" object.
-2. In the "message", provide a friendly, beautifully formatted markdown preview of all details (items, prices, GST, totals, dates, names).
-3. Conclude the message asking for user confirmation: "⚠️ *Please confirm: Would you like me to proceed and create this now? You can click 'Confirm & Execute' or reply 'Yes'.*"
+   - SCENARIO B: Incomplete Information (Google Antigravity Asking Modal)
+     When user asks to create/record something but DOES NOT give enough details (e.g. "I want to create an invoice", "Add a new product", "Add staff"):
+     Do NOT hallucinate fake numbers. Explain what is needed, and append an interactive asking card:
+     <<<ASK_QUESTION
+     {
+       "question": "Who is this invoice for, and which products or services should be included?",
+       "missingFields": ["customerName", "items", "amount"],
+       "suggestions": ["Recent Customer: Sharma Traders", "Apex Corp", "Walk-in Cash Customer"]
+     }
+     ASK_QUESTION>>>
 
-If the user is just asking a question or requesting business analysis (e.g. "What is my total sales?", "Who owes me money?", "Which products are low on stock?"):
-- Provide a helpful, clear markdown answer grounded strictly in the BUSINESS CONTEXT provided below.
-- Set "action": null.
-
-FORMAT REQUIREMENTS:
-You MUST respond with a single valid JSON object strictly matching this schema:
-{
-  "message": "Markdown response text to display to user",
-  "action": null | {
-    "type": "create_document" | "create_product" | "create_contact" | "create_staff" | "create_project" | "create_project_task" | "create_expense" | "create_ledger_entry",
-    "collection": "documents" | "products" | "contacts" | "staff" | "projects" | "project_tasks" | "expenses" | "ledger_transactions",
-    "label": "Action title for button, e.g. 'Confirm & Create Invoice for Ramesh'",
-    "data": { ...extracted structured fields... }
-  }
-}
-DO NOT include any text outside the JSON object.
+   - SCENARIO C: Regular Question / Conversational Query / Advice / Analysis
+     Answer thoroughly and articulately in markdown. Do NOT include any <<<ACTION_PROPOSAL>>> or <<<ASK_QUESTION>>> tags.
 
 LIVE BUSINESS DATA CONTEXT:
 ${safeBusinessContext}
 `;
 
-  // Build chat messages array
+  // Build formatted messages
   const formattedMessages = [{ role: "system", content: systemInstruction }];
 
-  // Add recent history
-  const recentHistory = history.slice(-6);
+  const recentHistory = history.slice(-8);
   for (const msg of recentHistory) {
     if (msg.role === 'user') {
       formattedMessages.push({ role: 'user', content: String(msg.content) });
@@ -323,14 +333,13 @@ ${safeBusinessContext}
     }
   }
 
-  // Append user prompt
   formattedMessages.push({ role: "user", content: prompt });
 
   let lastError = null;
 
   for (const modelName of MODELS_TO_TRY) {
     try {
-      console.log(`[HuggingFace AI] Requesting model: ${modelName}`);
+      console.log(`[Antigravity AI] Querying model: ${modelName}`);
       const res = await fetch(HF_ROUTER_URL, {
         method: 'POST',
         headers: {
@@ -340,15 +349,14 @@ ${safeBusinessContext}
         body: JSON.stringify({
           model: modelName,
           messages: formattedMessages,
-          temperature: 0.15,
-          max_tokens: 1800,
-          response_format: { type: 'json_object' }
+          temperature: 0.25,
+          max_tokens: 2200
         })
       });
 
       if (!res.ok) {
         const errText = await res.text();
-        console.warn(`[HuggingFace AI] Model ${modelName} returned status ${res.status}: ${errText.slice(0, 200)}`);
+        console.warn(`[Antigravity AI] Model ${modelName} returned status ${res.status}: ${errText.slice(0, 150)}`);
         lastError = new Error(`HF HTTP ${res.status}: ${errText}`);
         continue;
       }
@@ -357,67 +365,84 @@ ${safeBusinessContext}
       const rawContent = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
 
       if (!rawContent) {
-        console.warn(`[HuggingFace AI] Model ${modelName} returned empty content.`);
+        console.warn(`[Antigravity AI] Model ${modelName} returned empty text.`);
         continue;
       }
 
-      // Parse JSON from model output
-      let parsed = null;
-      try {
-        parsed = JSON.parse(rawContent);
-      } catch (jsonErr) {
-        // Attempt substring extraction if wrapped in backticks
-        const firstBrace = rawContent.indexOf('{');
-        const lastBrace = rawContent.lastIndexOf('}');
-        if (firstBrace !== -1 && lastBrace !== -1) {
-          try {
-            parsed = JSON.parse(rawContent.substring(firstBrace, lastBrace + 1));
-          } catch (innerErr) {
-            console.warn("[HuggingFace AI] Failed to parse extracted JSON substring:", innerErr.message);
+      // Parse Action Proposal or Asking Question blocks
+      let responseText = rawContent;
+      let actionObj = null;
+      let questionObj = null;
+
+      // Check for <<<ACTION_PROPOSAL ... ACTION_PROPOSAL>>>
+      const actionStartTag = '<<<ACTION_PROPOSAL';
+      const actionEndTag = 'ACTION_PROPOSAL>>>';
+      const actionIdxStart = rawContent.indexOf(actionStartTag);
+      const actionIdxEnd = rawContent.indexOf(actionEndTag);
+
+      if (actionIdxStart !== -1 && actionIdxEnd !== -1) {
+        const jsonStr = rawContent.substring(actionIdxStart + actionStartTag.length, actionIdxEnd).trim();
+        try {
+          const parsedAction = JSON.parse(jsonStr);
+          if (parsedAction && parsedAction.type) {
+            const actionType = parsedAction.type;
+            const collection = parsedAction.collection || getCollectionForAction(actionType);
+            const normalizedData = normalizeActionData(actionType, parsedAction.data || parsedAction);
+
+            actionObj = {
+              actionId: `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              type: actionType,
+              collection,
+              label: parsedAction.label || generateActionLabel(actionType, normalizedData),
+              summary: parsedAction.summary || parsedAction.label || '',
+              data: normalizedData,
+              status: 'pending'
+            };
           }
+        } catch (e) {
+          console.warn('[Antigravity AI] Failed to parse ACTION_PROPOSAL JSON:', e.message);
         }
+        responseText = rawContent.substring(0, actionIdxStart).trim();
       }
 
-      if (parsed && typeof parsed === 'object') {
-        const responseMessage = parsed.message || (typeof parsed.response === 'string' ? parsed.response : rawContent);
-        let normalizedAction = null;
+      // Check for <<<ASK_QUESTION ... ASK_QUESTION>>>
+      const askStartTag = '<<<ASK_QUESTION';
+      const askEndTag = 'ASK_QUESTION>>>';
+      const askIdxStart = rawContent.indexOf(askStartTag);
+      const askIdxEnd = rawContent.indexOf(askEndTag);
 
-        if (parsed.action && parsed.action.type && parsed.action.data) {
-          const actionType = parsed.action.type;
-          const collection = parsed.action.collection || getCollectionForAction(actionType);
-          const normalizedData = normalizeActionData(actionType, parsed.action.data);
-
-          normalizedAction = {
-            actionId: `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            type: actionType,
-            collection,
-            label: parsed.action.label || generateActionLabel(actionType, normalizedData),
-            summary: parsed.action.summary || parsed.action.label || '',
-            data: normalizedData,
-            status: 'pending'
-          };
+      if (askIdxStart !== -1 && askIdxEnd !== -1) {
+        const jsonStr = rawContent.substring(askIdxStart + askStartTag.length, askIdxEnd).trim();
+        try {
+          const parsedQuestion = JSON.parse(jsonStr);
+          if (parsedQuestion && parsedQuestion.question) {
+            questionObj = {
+              questionId: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+              question: parsedQuestion.question,
+              missingFields: parsedQuestion.missingFields || [],
+              suggestions: parsedQuestion.suggestions || [],
+              status: 'active'
+            };
+          }
+        } catch (e) {
+          console.warn('[Antigravity AI] Failed to parse ASK_QUESTION JSON:', e.message);
         }
-
-        console.log(`[HuggingFace AI] Success with model: ${modelName}. Action proposed: ${normalizedAction ? normalizedAction.type : 'none'}`);
-        return {
-          response: responseMessage,
-          action: normalizedAction
-        };
-      } else {
-        // Model returned plain text instead of JSON
-        console.log(`[HuggingFace AI] Model returned raw text.`);
-        return {
-          response: rawContent,
-          action: null
-        };
+        responseText = rawContent.substring(0, askIdxStart).trim();
       }
+
+      console.log(`[Antigravity AI] Success with ${modelName}. Action: ${!!actionObj}, Question: ${!!questionObj}`);
+      return {
+        response: responseText,
+        action: actionObj,
+        question: questionObj
+      };
     } catch (err) {
-      console.error(`[HuggingFace AI] Error with model ${modelName}:`, err.message);
+      console.error(`[Antigravity AI] Error with model ${modelName}:`, err.message);
       lastError = err;
     }
   }
 
-  throw lastError || new Error("All Hugging Face AI models failed to respond.");
+  throw lastError || new Error("All AI models failed to respond.");
 }
 
 function getCollectionForAction(type) {
@@ -458,7 +483,7 @@ function generateActionLabel(type, data) {
 }
 
 /**
- * Enterprise Project Copilot powered by Hugging Face AI
+ * Enterprise Project Copilot
  */
 async function getProjectAIResponse(mode, prompt, projectContext = {}) {
   const token = getHfToken();
@@ -511,7 +536,6 @@ ${prompt || `Perform ${mode} analysis`}
     }
   }
 
-  // Deterministic fallback if offline
   return generateDeterministicFallback(mode, prompt, projectContext);
 }
 
