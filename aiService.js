@@ -388,7 +388,42 @@ ${safeBusinessContext}
 
   formattedMessages.push({ role: "user", content: prompt });
 
+  // Check if Groq API key is available for ultra-fast Llama 3.3 70B (free tier)
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    try {
+      console.log(`[Business AI] Querying Groq Llama-3.3-70B-Versatile`);
+      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${groqKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: formattedMessages,
+          temperature: 0.25,
+          max_tokens: 2500
+        })
+      });
+
+      if (groqRes.ok) {
+        const groqData = await groqRes.json();
+        const rawContent = groqData.choices && groqData.choices[0] && groqData.choices[0].message && groqData.choices[0].message.content;
+        if (rawContent) {
+          return parseAIContent(rawContent);
+        }
+      } else {
+        const errText = await groqRes.text();
+        console.warn(`[Business AI] Groq returned status ${groqRes.status}:`, errText);
+      }
+    } catch (e) {
+      console.warn(`[Business AI] Groq query failed:`, e.message);
+    }
+  }
+
   let lastError = null;
+  let isDepletedCredits = false;
 
   for (const modelName of MODELS_TO_TRY) {
     try {
@@ -410,6 +445,10 @@ ${safeBusinessContext}
       if (!res.ok) {
         const errText = await res.text();
         console.warn(`[Business AI] Model ${modelName} returned status ${res.status}: ${errText.slice(0, 150)}`);
+        if (res.status === 402 || errText.includes('depleted your monthly included credits')) {
+          isDepletedCredits = true;
+          break; // Stop retrying if credits are depleted across the account
+        }
         lastError = new Error(`HF HTTP ${res.status}: ${errText}`);
         continue;
       }
@@ -422,80 +461,90 @@ ${safeBusinessContext}
         continue;
       }
 
-      // Parse Action Proposal or Asking Question blocks
-      let responseText = rawContent;
-      let actionObj = null;
-      let questionObj = null;
-
-      // Check for <<<ACTION_PROPOSAL ... ACTION_PROPOSAL>>>
-      const actionStartTag = '<<<ACTION_PROPOSAL';
-      const actionEndTag = 'ACTION_PROPOSAL>>>';
-      const actionIdxStart = rawContent.indexOf(actionStartTag);
-      const actionIdxEnd = rawContent.indexOf(actionEndTag);
-
-      if (actionIdxStart !== -1 && actionIdxEnd !== -1) {
-        const jsonStr = rawContent.substring(actionIdxStart + actionStartTag.length, actionIdxEnd).trim();
-        try {
-          const parsedAction = JSON.parse(jsonStr);
-          if (parsedAction && parsedAction.type) {
-            const actionType = parsedAction.type;
-            const collection = parsedAction.collection || getCollectionForAction(actionType);
-            const normalizedData = normalizeActionData(actionType, parsedAction.data || parsedAction);
-
-            actionObj = {
-              actionId: `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              type: actionType,
-              collection,
-              label: parsedAction.label || generateActionLabel(actionType, normalizedData),
-              summary: parsedAction.summary || parsedAction.label || '',
-              data: normalizedData,
-              status: 'pending'
-            };
-          }
-        } catch (e) {
-          console.warn('[Business AI] Failed to parse ACTION_PROPOSAL JSON:', e.message);
-        }
-        responseText = rawContent.substring(0, actionIdxStart).trim();
-      }
-
-      // Check for <<<ASK_QUESTION ... ASK_QUESTION>>>
-      const askStartTag = '<<<ASK_QUESTION';
-      const askEndTag = 'ASK_QUESTION>>>';
-      const askIdxStart = rawContent.indexOf(askStartTag);
-      const askIdxEnd = rawContent.indexOf(askEndTag);
-
-      if (askIdxStart !== -1 && askIdxEnd !== -1) {
-        const jsonStr = rawContent.substring(askIdxStart + askStartTag.length, askIdxEnd).trim();
-        try {
-          const parsedQuestion = JSON.parse(jsonStr);
-          if (parsedQuestion && parsedQuestion.question) {
-            questionObj = {
-              questionId: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-              question: parsedQuestion.question,
-              missingFields: parsedQuestion.missingFields || [],
-              suggestions: parsedQuestion.suggestions || [],
-              status: 'active'
-            };
-          }
-        } catch (e) {
-          console.warn('[Business AI] Failed to parse ASK_QUESTION JSON:', e.message);
-        }
-        responseText = rawContent.substring(0, askIdxStart).trim();
-      }
-
-      console.log(`[Business AI] Success with ${modelName}. Action: ${!!actionObj}, Question: ${!!questionObj}`);
-      return {
-        response: responseText,
-        action: actionObj,
-        question: questionObj
-      };
+      return parseAIContent(rawContent);
     } catch (err) {
       console.error(`[Business AI] Error with model ${modelName}:`, err.message);
       lastError = err;
     }
   }
 
+  if (isDepletedCredits) {
+    return {
+      response: `⚠️ **Hugging Face Monthly Credits Depleted (HTTP 402)**\n\nThe Hugging Face token provided has exhausted its monthly included free credits for Inference Providers on Hugging Face.\n\n### How to restore AI immediately:\n1. **Provide a Fresh Free Hugging Face Token**: Create a new free Hugging Face account at [huggingface.co/join](https://huggingface.co/join), generate a free User Access Token under **Settings → Access Tokens**, and send it here.\n2. **Or Add Pre-paid Credits**: Purchase credits on your Hugging Face account at [huggingface.co/settings/billing](https://huggingface.co/settings/billing).\n3. **Or Free Groq Llama 3.3 (Recommended)**: Create a 100% free API key from [console.groq.com](https://console.groq.com) (no credit card required) for unlimited high-speed Llama 3.3 70B and paste it here!`,
+      action: null,
+      question: null
+    };
+  }
+
   throw lastError || new Error("All AI models failed to respond.");
+}
+
+function parseAIContent(rawContent) {
+  let responseText = rawContent;
+  let actionObj = null;
+  let questionObj = null;
+
+  // Check for <<<ACTION_PROPOSAL ... ACTION_PROPOSAL>>>
+  const actionStartTag = '<<<ACTION_PROPOSAL';
+  const actionEndTag = 'ACTION_PROPOSAL>>>';
+  const actionIdxStart = rawContent.indexOf(actionStartTag);
+  const actionIdxEnd = rawContent.indexOf(actionEndTag);
+
+  if (actionIdxStart !== -1 && actionIdxEnd !== -1) {
+    const jsonStr = rawContent.substring(actionIdxStart + actionStartTag.length, actionIdxEnd).trim();
+    try {
+      const parsedAction = JSON.parse(jsonStr);
+      if (parsedAction && parsedAction.type) {
+        const actionType = parsedAction.type;
+        const collection = parsedAction.collection || getCollectionForAction(actionType);
+        const normalizedData = normalizeActionData(actionType, parsedAction.data || parsedAction);
+
+        actionObj = {
+          actionId: `act_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          type: actionType,
+          collection,
+          label: parsedAction.label || generateActionLabel(actionType, normalizedData),
+          summary: parsedAction.summary || parsedAction.label || '',
+          data: normalizedData,
+          status: 'pending'
+        };
+      }
+    } catch (e) {
+      console.warn('[Business AI] Failed to parse ACTION_PROPOSAL JSON:', e.message);
+    }
+    responseText = rawContent.substring(0, actionIdxStart).trim();
+  }
+
+  // Check for <<<ASK_QUESTION ... ASK_QUESTION>>>
+  const askStartTag = '<<<ASK_QUESTION';
+  const askEndTag = 'ASK_QUESTION>>>';
+  const askIdxStart = rawContent.indexOf(askStartTag);
+  const askIdxEnd = rawContent.indexOf(askEndTag);
+
+  if (askIdxStart !== -1 && askIdxEnd !== -1) {
+    const jsonStr = rawContent.substring(askIdxStart + askStartTag.length, askIdxEnd).trim();
+    try {
+      const parsedQuestion = JSON.parse(jsonStr);
+      if (parsedQuestion && parsedQuestion.question) {
+        questionObj = {
+          questionId: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          question: parsedQuestion.question,
+          missingFields: parsedQuestion.missingFields || [],
+          suggestions: parsedQuestion.suggestions || [],
+          status: 'active'
+        };
+      }
+    } catch (e) {
+      console.warn('[Business AI] Failed to parse ASK_QUESTION JSON:', e.message);
+    }
+    responseText = rawContent.substring(0, askIdxStart).trim();
+  }
+
+  return {
+    response: responseText,
+    action: actionObj,
+    question: questionObj
+  };
 }
 
 function getCollectionForAction(type) {
