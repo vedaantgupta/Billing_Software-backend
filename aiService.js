@@ -388,12 +388,12 @@ ${safeBusinessContext}
 
   formattedMessages.push({ role: "user", content: prompt });
 
-  // Check if Groq API key is available for ultra-fast Llama 3.3 70B (free tier)
+  // 1. Primary: If GROQ_API_KEY is available, prioritize Groq for ultra-fast Llama 3.3 70B
   const groqKey = process.env.GROQ_API_KEY;
   if (groqKey) {
     try {
-      console.log(`[Business AI] Querying Groq Llama-3.3-70B-Versatile`);
-      const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      console.log(`[Business AI] Querying Groq: llama-3.3-70b-versatile`);
+      const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${groqKey}`,
@@ -403,31 +403,32 @@ ${safeBusinessContext}
           model: 'llama-3.3-70b-versatile',
           messages: formattedMessages,
           temperature: 0.25,
-          max_tokens: 2500
+          max_tokens: 2200
         })
       });
 
-      if (groqRes.ok) {
-        const groqData = await groqRes.json();
-        const rawContent = groqData.choices && groqData.choices[0] && groqData.choices[0].message && groqData.choices[0].message.content;
+      if (res.ok) {
+        const data = await res.json();
+        const rawContent = data.choices?.[0]?.message?.content;
         if (rawContent) {
-          return parseAIContent(rawContent);
+          console.log('[Business AI] Success with Groq Llama 3.3 70B');
+          return parseAIResponse(rawContent);
         }
       } else {
-        const errText = await groqRes.text();
-        console.warn(`[Business AI] Groq returned status ${groqRes.status}:`, errText);
+        const errText = await res.text();
+        console.warn(`[Business AI] Groq returned status ${res.status}: ${errText.slice(0, 100)}`);
       }
     } catch (e) {
-      console.warn(`[Business AI] Groq query failed:`, e.message);
+      console.warn('[Business AI] Groq attempt failed:', e.message);
     }
   }
 
+  // 2. Hugging Face Serverless Router
   let lastError = null;
-  let isDepletedCredits = false;
 
   for (const modelName of MODELS_TO_TRY) {
     try {
-      console.log(`[Business AI] Querying model: ${modelName}`);
+      console.log(`[Business AI] Querying HF model: ${modelName}`);
       const res = await fetch(HF_ROUTER_URL, {
         method: 'POST',
         headers: {
@@ -445,11 +446,11 @@ ${safeBusinessContext}
       if (!res.ok) {
         const errText = await res.text();
         console.warn(`[Business AI] Model ${modelName} returned status ${res.status}: ${errText.slice(0, 150)}`);
-        if (res.status === 402 || errText.includes('depleted your monthly included credits')) {
-          isDepletedCredits = true;
-          break; // Stop retrying if credits are depleted across the account
-        }
         lastError = new Error(`HF HTTP ${res.status}: ${errText}`);
+        if (res.status === 402) {
+          // Account quota exhausted, break loop immediately
+          break;
+        }
         continue;
       }
 
@@ -461,16 +462,18 @@ ${safeBusinessContext}
         continue;
       }
 
-      return parseAIContent(rawContent);
+      console.log(`[Business AI] Success with HF ${modelName}.`);
+      return parseAIResponse(rawContent);
     } catch (err) {
       console.error(`[Business AI] Error with model ${modelName}:`, err.message);
       lastError = err;
     }
   }
 
-  if (isDepletedCredits) {
+  // Handle 402 Hugging Face Monthly Credits Depleted cleanly
+  if (lastError && (lastError.message.includes('402') || lastError.message.includes('depleted your monthly included credits'))) {
     return {
-      response: `⚠️ **Hugging Face Monthly Credits Depleted (HTTP 402)**\n\nThe Hugging Face token provided has exhausted its monthly included free credits for Inference Providers on Hugging Face.\n\n### How to restore AI immediately:\n1. **Provide a Fresh Free Hugging Face Token**: Create a new free Hugging Face account at [huggingface.co/join](https://huggingface.co/join), generate a free User Access Token under **Settings → Access Tokens**, and send it here.\n2. **Or Add Pre-paid Credits**: Purchase credits on your Hugging Face account at [huggingface.co/settings/billing](https://huggingface.co/settings/billing).\n3. **Or Free Groq Llama 3.3 (Recommended)**: Create a 100% free API key from [console.groq.com](https://console.groq.com) (no credit card required) for unlimited high-speed Llama 3.3 70B and paste it here!`,
+      response: `⚠️ **Hugging Face Monthly Credits Depleted (HTTP 402)**\n\nThe Hugging Face token provided (\`hf_...\`) has exhausted its monthly included free credits for Inference Providers on Hugging Face.\n\n### How to restore AI immediately:\n1. **Provide a Fresh Free Hugging Face Token**: Create a new free Hugging Face account at [huggingface.co/join](https://huggingface.co/join), generate a free User Access Token under **Settings → Access Tokens**, and send it here.\n2. **Or Add Pre-paid Credits**: Purchase credits on your Hugging Face account at [huggingface.co/settings/billing](https://huggingface.co/settings/billing).\n3. **Or Free Groq Llama 3.3 (Recommended)**: Create a 100% free API key from [console.groq.com](https://console.groq.com) (no credit card required) for unlimited high-speed Llama 3.3 70B and paste it here!`,
       action: null,
       question: null
     };
@@ -479,7 +482,7 @@ ${safeBusinessContext}
   throw lastError || new Error("All AI models failed to respond.");
 }
 
-function parseAIContent(rawContent) {
+function parseAIResponse(rawContent) {
   let responseText = rawContent;
   let actionObj = null;
   let questionObj = null;
