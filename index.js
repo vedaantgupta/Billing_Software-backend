@@ -25,7 +25,7 @@ const { Server } = require('socket.io');
 const { MongoClient, ObjectId } = require('mongodb');
 const cors = require('cors');
 const multer = require('multer');
-const { getAIResponse, getProjectAIResponse, normalizeActionData } = require('./aiService');
+const { getAIResponse, getProjectAIResponse, normalizeActionData, testGeminiKey } = require('./aiService');
 
 const app = express();
 const server = http.createServer(app);
@@ -668,8 +668,8 @@ app.get('/api/analytics/top-states', async (req, res) => {
 // AI Assistant Route
 app.post('/api/ai/chat', async (req, res) => {
   try {
-    const { prompt, history, userId } = req.body;
-    console.log(`[AI] New request from user ${userId}. Prompt: "${prompt}"`);
+    const { prompt, history, userId, userGeminiKey, geminiModel } = req.body;
+    console.log(`[AI] New request from user ${userId}. Prompt: "${prompt}" (model: ${geminiModel || 'default'}, hasUserKey: ${!!userGeminiKey})`);
     if (!prompt) {
       return res.status(400).json({ message: 'Prompt is required' });
     }
@@ -830,16 +830,33 @@ app.post('/api/ai/chat', async (req, res) => {
     }
 
     // Call Antigravity AI Engine
-    const aiResult = await getAIResponse(prompt, history || [], businessContext);
+    const aiResult = await getAIResponse(prompt, history || [], businessContext, userGeminiKey, geminiModel);
 
     res.json({
       response: aiResult.response,
       action: aiResult.action,
-      question: aiResult.question
+      question: aiResult.question,
+      needsKey: aiResult.needsKey || false
     });
   } catch (err) {
     console.error('AI Route error:', err);
     res.status(500).json({ message: 'Error communicating with AI assistant: ' + err.message });
+  }
+});
+
+// Test and Validate Google Gemini Key Endpoint
+app.post('/api/ai/test-key', async (req, res) => {
+  try {
+    const { apiKey, model } = req.body;
+    console.log(`[Google Gemini] Validating API key... (model: ${model || 'default'})`);
+    const result = await testGeminiKey(apiKey, model);
+    if (result.valid) {
+      return res.json(result);
+    }
+    return res.status(400).json(result);
+  } catch (err) {
+    console.error('[AI Test Key Route Error]:', err);
+    res.status(500).json({ valid: false, error: err.message });
   }
 });
 

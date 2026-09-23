@@ -2,7 +2,7 @@ require('dotenv').config();
 const { getAIResponse, getProjectAIResponse } = require('./aiService');
 
 async function test() {
-  console.log("=== Testing Hugging Face AI Service ===");
+  console.log("=== Testing Google Gemini AI Service ===");
   const dummyContext = `
     - Total Products: 10
     - Recent Products: Laptop, Wireless Mouse, Mechanical Keyboard
@@ -25,20 +25,21 @@ async function test() {
     console.log("Action Object:", JSON.stringify(res2.action, null, 2));
 
     // Test 3: Project Copilot
-    console.log("\n3. Testing Project Copilot...");
+    console.log("\n3. Testing Project Copilot with Google Gemini...");
     const copilotRes = await getProjectAIResponse('summary', 'Provide summary', {
       project: { name: 'ERP Modernization', status: 'Active', budget: 500000 },
       tasks: [
         { name: 'Architecture Plan', status: 'Done' },
-        { name: 'HF AI Integration', status: 'In Progress' }
+        { name: 'Google Gemini Integration', status: 'In Progress' }
       ]
     });
     console.log("Copilot Response:\n", copilotRes.slice(0, 300));
 
-    console.log("\n✅ All Hugging Face tests succeeded!");
+    console.log("\n✅ All Google Gemini tests succeeded!");
   } catch (err) {
     console.error("❌ Test failed:", err);
   }
 }
 
 test();
+
